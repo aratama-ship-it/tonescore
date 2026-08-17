@@ -76,44 +76,63 @@ export class PitchRecorder {
   }
 }
 
-function detect(buf, sampleRate) {
+// F0は最大420Hzしか見ないので、12kHz相当まで間引いてから相関を取る。
+// 48kHzのまま全ラグを走らせると1フレーム約85万回の積和になり、iPhoneのrAF(60fps)に間に合わない。
+// 間引き後は約6万回まで落ちる。分解能は放物線補間で補う（200Hz付近で約0.1半音）。
+const TARGET_SR = 12000;
+let dec = null; // 間引き用バッファを使い回す
+
+export function detect(buf, sampleRate) {
   let rms = 0;
   for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / buf.length);
   if (rms < RMS_GATE) return { hz: 0, rms };
 
-  const minLag = Math.floor(sampleRate / MAX_HZ);
-  const maxLag = Math.min(Math.floor(sampleRate / MIN_HZ), Math.floor(buf.length / 2));
-  let bestLag = -1, bestCorr = 0;
-  let prev = 0, rising = false;
+  const D = Math.max(1, Math.round(sampleRate / TARGET_SR));
+  const sr = sampleRate / D;
+  const n = Math.floor(buf.length / D);
+  if (!dec || dec.length !== n) dec = new Float32Array(n);
+  // D個の平均で間引く（粗いローパス兼ダウンサンプル）
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    for (let k = 0; k < D; k++) s += buf[i * D + k];
+    dec[i] = s / D;
+  }
 
+  const minLag = Math.floor(sr / MAX_HZ);
+  const maxLag = Math.min(Math.floor(sr / MIN_HZ), n - 8);
+  if (maxLag <= minLag + 2) return { hz: 0, rms };
+
+  const corr = new Float32Array(maxLag + 2);
+  let bestCorr = 0;
   for (let lag = minLag; lag <= maxLag; lag++) {
     let num = 0, d1 = 0, d2 = 0;
-    for (let i = 0; i + lag < buf.length; i++) {
-      num += buf[i] * buf[i + lag];
-      d1 += buf[i] * buf[i];
-      d2 += buf[i + lag] * buf[i + lag];
+    for (let i = 0; i + lag < n; i++) {
+      const a = dec[i], b = dec[i + lag];
+      num += a * b; d1 += a * a; d2 += b * b;
     }
-    const corr = num / (Math.sqrt(d1 * d2) || 1);
-    // 最初の谷を越えてから探す（オクターブ下の誤検出を避ける）
-    if (!rising && corr < prev) rising = true;
-    if (rising && corr > bestCorr) { bestCorr = corr; bestLag = lag; }
-    prev = corr;
+    const c = num / (Math.sqrt(d1 * d2) || 1);
+    corr[lag] = c;
+    if (c > bestCorr) bestCorr = c;
   }
-  if (bestLag < 0 || bestCorr < CLARITY) return { hz: 0, rms };
+  if (bestCorr < CLARITY) return { hz: 0, rms };
 
-  // 放物線補間でラグを精密化
-  const y = (l) => {
-    let num = 0, d1 = 0, d2 = 0;
-    for (let i = 0; i + l < buf.length; i++) {
-      num += buf[i] * buf[i + l]; d1 += buf[i] * buf[i]; d2 += buf[i + l] * buf[i + l];
-    }
-    return num / (Math.sqrt(d1 * d2) || 1);
-  };
-  const y0 = y(bestLag - 1), y1 = bestCorr, y2 = y(bestLag + 1);
+  // ★最大値ではなく「最初の十分に高い山」を採る。
+  //   ラグが大きいほど重なる区間が短くなり正規化相関が持ち上がるため、
+  //   最大値を採ると周期の2倍（1オクターブ下）を掴む。実測で147Hz→73.5Hzになった。
+  const TH = bestCorr * 0.86;
+  let bestLag = -1;
+  for (let lag = minLag + 1; lag < maxLag; lag++) {
+    if (corr[lag] >= TH && corr[lag] > corr[lag - 1] && corr[lag] >= corr[lag + 1]) { bestLag = lag; break; }
+  }
+  if (bestLag < 0) return { hz: 0, rms };
+  bestCorr = corr[bestLag];
+
+  // 放物線補間でラグを精密化（相関は上で計算済みのものを使う）
+  const y0 = corr[bestLag - 1] || bestCorr, y1 = bestCorr, y2 = corr[bestLag + 1] || bestCorr;
   const denom = 2 * (2 * y1 - y0 - y2);
   const shift = denom !== 0 ? (y2 - y0) / denom : 0;
-  return { hz: sampleRate / (bestLag + shift), rms };
+  return { hz: sr / (bestLag + shift), rms };
 }
 
 /** 有声フレームの中央値Hz */

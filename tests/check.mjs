@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { DECKS, syllables, isPunct } from '../js/data/phrases.js';
 import { toBopomofo, toPinyinMarked, splitTone } from '../js/bopomofo.js';
 import { applySandhi, contour, judge } from '../js/tones.js';
-import { segment, normalize, medianHz } from '../js/pitch.js';
+import { segment, normalize, medianHz, detect } from '../js/pitch.js';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok', name); };
@@ -145,7 +145,46 @@ t('中央値と半音正規化', () => {
   assert.ok(Math.abs(n[1].st - 12) < 1e-9); // 1オクターブ = 12半音
 });
 
-console.log('\n[7] 音節展開');
+console.log('\n[7] F0抽出（合成音での精度と速度）');
+// 声に近い波形：基本波＋倍音を重ねる。48kHz / 2048サンプル = 実機と同条件
+const voiceBuf = (f0, sr = 48000, n = 2048, amp = 0.25) => {
+  const b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    b[i] = amp * (Math.sin(2 * Math.PI * f0 * t)
+      + 0.5 * Math.sin(4 * Math.PI * f0 * t)
+      + 0.25 * Math.sin(6 * Math.PI * f0 * t));
+  }
+  return b;
+};
+t('80〜400Hz を誤差1%以内で検出する', () => {
+  for (const f0 of [80, 110, 147, 196, 220, 262, 330, 392]) {
+    const { hz } = detect(voiceBuf(f0), 48000);
+    const err = Math.abs(hz - f0) / f0;
+    assert.ok(err < 0.01, `${f0}Hz → ${hz.toFixed(1)}Hz（誤差 ${(err * 100).toFixed(2)}%）`);
+  }
+});
+t('無音は hz=0 を返す', () => {
+  assert.equal(detect(new Float32Array(2048), 48000).hz, 0);
+});
+t('雑音（ホワイトノイズ）を有声と誤認しない', () => {
+  const b = new Float32Array(2048);
+  let seed = 42;
+  for (let i = 0; i < b.length; i++) { seed = (seed * 1103515245 + 12345) % 2147483648; b[i] = (seed / 2147483648 - 0.5) * 0.3; }
+  assert.equal(detect(b, 48000).hz, 0);
+});
+t('1フレームの処理が rAF の予算(16.6ms)に十分収まる', () => {
+  const b = voiceBuf(200);
+  detect(b, 48000); // ウォームアップ
+  const t0 = performance.now();
+  const N = 200;
+  for (let i = 0; i < N; i++) detect(b, 48000);
+  const ms = (performance.now() - t0) / N;
+  console.log(`     1フレーム ${ms.toFixed(3)} ms（このMacでの実測）`);
+  assert.ok(ms < 4, `1フレーム ${ms.toFixed(2)}ms は重すぎる`);
+});
+
+console.log('\n[8] 音節展開');
 t('句読点はピンインを消費しない', () => {
   const s = syllables({ zh: '謝謝，麻煩你了。', pinyin: 'xie4 xie5 ma2 fan5 ni3 le5' });
   assert.equal(s.filter((x) => !x.punct).length, 6);

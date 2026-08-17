@@ -1,17 +1,17 @@
 // 聲調譜 TONESCORE — オフライン用の最小 Service Worker
 // ★配信物を変えたら VERSION を上げ、index.html の ?v= も揃えて上げること。
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `tonescore-${VERSION}`;
 const ASSETS = [
   './',
   './index.html',
-  './css/app.css?v=1',
-  './js/app.js?v=1',
+  './css/app.css?v=2',
+  './js/app.js?v=2',
   './js/tones.js',
   './js/pitch.js',
   './js/bopomofo.js',
   './js/data/phrases.js',
-  './manifest.json?v=1',
+  './manifest.json?v=2',
 ];
 
 self.addEventListener('install', (e) => {
