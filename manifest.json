@@ -1,0 +1,15 @@
+{
+  "name": "聲調譜 TONESCORE — 台湾華語",
+  "short_name": "聲調譜",
+  "description": "台湾華語の声調を譜面として掴む。規範カーブに自分の声のピッチを重ねる発音トレーナー。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0F1216",
+  "theme_color": "#0F1216",
+  "orientation": "portrait",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

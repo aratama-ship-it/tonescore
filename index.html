@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>声調譜 TONESCORE — 台湾華語のリスニングと発音</title>
+<meta name="description" content="台湾華語の声調を譜面として掴む。規範カーブに自分の声のピッチを重ねる発音トレーナー。">
+<meta name="theme-color" content="#0F1216">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json?v=1">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=1">
+<link rel="stylesheet" href="css/app.css?v=1">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <span class="brand-han" lang="zh-Hant-TW">聲調譜</span>
+    <span class="brand-lat">TONESCORE</span>
+  </div>
+  <div class="bar-right" id="deckLabel">現地で使う</div>
+</header>
+
+<!-- ───────────────── 練習（中心画面） ───────────────── -->
+<main id="view-train" class="view">
+
+  <section class="score" aria-label="声調譜">
+    <div class="score-head">
+      <span class="idx" id="idx">1 / 10</span>
+      <span class="flag" id="verifyFlag" hidden>現地確認したい表現</span>
+    </div>
+
+    <div class="hanzi" id="hanzi" lang="zh-Hant-TW"></div>
+    <p class="ja" id="ja"></p>
+
+    <div class="lane-wrap">
+      <canvas id="lane" class="lane"></canvas>
+    </div>
+
+    <div class="verdicts" id="verdicts"></div>
+
+    <p class="legend">
+      <span class="key key-model"></span>規範カーブ（五度式の理論値・実音声の実測ではない）
+      <span class="key key-voice"></span>あなたの声（実測F0／自分の中央ピッチ基準の半音）
+    </p>
+    <p class="note" id="note"></p>
+  </section>
+
+  <section class="pad">
+    <div class="row-listen">
+      <button class="btn btn-ghost" id="btnMelody">
+        <span class="btn-t">旋律で掴む</span><span class="btn-s">声調をハミングで</span>
+      </button>
+      <button class="btn btn-ghost" id="btnSpeak">
+        <span class="btn-t">中文を聞く</span><span class="btn-s">台湾華語の音声</span>
+      </button>
+    </div>
+
+    <button class="mic" id="mic">
+      <span class="mic-ring"></span>
+      <span class="mic-t">押している間、話す</span>
+      <span class="mic-s" id="micState">マイクを使います</span>
+    </button>
+
+    <div class="row-after">
+      <button class="btn btn-ghost btn-sm" id="btnPlayMine" disabled>自分の声を聞く</button>
+      <button class="btn btn-ghost btn-sm" id="btnAB" disabled>交互に聞く</button>
+    </div>
+
+    <nav class="stepper">
+      <button id="prev" class="step">← 前</button>
+      <button id="next" class="step">次 →</button>
+    </nav>
+  </section>
+</main>
+
+<!-- ───────────────── 耳だけモード ───────────────── -->
+<main id="view-ear" class="view" hidden>
+  <section class="ear">
+    <h2 class="h2">耳だけモード</h2>
+    <p class="lead">画面を見ずに聞き流す。歩きながら、口だけ動かす用。</p>
+
+    <div class="field">
+      <span class="field-l">並び</span>
+      <div class="seg" id="earOrder" role="radiogroup">
+        <button data-v="zh" class="on">中文だけ</button>
+        <button data-v="zh-ja">中文 → 日本語</button>
+        <button data-v="zh-gap-zh">中文 → 間 → 中文</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <span class="field-l">中文の声</span>
+      <select id="voiceSel" class="sel"></select>
+      <p class="hint" id="voiceHint"></p>
+    </div>
+
+    <div class="field">
+      <span class="field-l">速さ <b id="rateVal">0.85</b></span>
+      <input type="range" id="earRate" min="0.5" max="1.2" step="0.05" value="0.85">
+    </div>
+
+    <div class="field">
+      <span class="field-l">間 <b id="gapVal">1.6</b> 秒</span>
+      <input type="range" id="earGap" min="0.4" max="4" step="0.2" value="1.6">
+    </div>
+
+    <button class="btn btn-solid btn-wide" id="earPlay">再生する</button>
+    <p class="now" id="earNow">—</p>
+    <p class="caveat">
+      画面ロック中の連続再生は、ブラウザの音声合成の制約で止まることがあります（要実機検証）。
+      現状は画面をつけたまま使う想定です。
+    </p>
+  </section>
+</main>
+
+<!-- ───────────────── フレーズ集 ───────────────── -->
+<main id="view-list" class="view" hidden>
+  <section class="list" id="deckList"></section>
+</main>
+
+<nav class="tabs">
+  <button data-view="train" class="tab on"><span>譜</span>練習</button>
+  <button data-view="ear" class="tab"><span>耳</span>耳だけ</button>
+  <button data-view="list" class="tab"><span>集</span>フレーズ</button>
+</nav>
+
+<script type="module" src="js/app.js?v=1"></script>
+</body>
+</html>
