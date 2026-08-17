@@ -1,6 +1,6 @@
 # 聲調譜 TONESCORE — 台湾華語のリスニング＋発音アプリ
 
-最終更新: 2026-08-17
+最終更新: 2026-08-18（iPhone実機1回目の結果を反映、v3配信）
 公開URL: https://aratama-ship-it.github.io/tonescore/ （GitHub Pages / main / ルート・公開リポジトリ）
 リポジトリ: https://github.com/aratama-ship-it/tonescore
 （作業ツリーはiCloud上、gitディレクトリは `~/git-repos/tonescore` に分離 = iCloud破損対策）
@@ -42,7 +42,7 @@ js/tones.js           規範カーブ（五度式）、三声変調、旋律の�
 js/pitch.js           マイク→F0実測（正規化自己相関）、有声区間分割、半音正規化
 js/bopomofo.js        ピンイン→注音の決定論的変換（注音を手打ちしないため）
 js/data/phrases.js    フレーズ本体（繁体字＋ピンイン＋日本語＋verifyフラグ）
-tests/check.mjs       ロジック検証（node tests/check.mjs／18件）
+tests/check.mjs       ロジック検証（node tests/check.mjs／28件）
 sw.js manifest.json icons/
 ```
 
@@ -69,21 +69,21 @@ sw.js manifest.json icons/
 8. **初回のマイク許可ダイアログ中に指が離れる前提で書く。** 押下フラグ(`pressed`)と
    録音中フラグ(`holding`)を分けている。片方だけにすると許可後に録音が止まらなくなる。
 
-### 検証済み / 未検証（2026-08-17時点）
+### 検証済み / 未検証（2026-08-18時点）
 
 - 検証済み（Claudeがブラウザで実測）:
   - 画面3つの表示、注音の自動変換（不好意思＝ㄅㄨˋ ㄏㄠˇ ㄧˋ ˙ㄙ 等）、變調表示（我也很好→2,2,2,3）
   - 合成フレームを流し込んだ解析→判定→描画の経路（4音節中3音節一致、指摘文の生成）
-  - `node tests/check.mjs` 22件すべて通過（合成音でのF0精度80〜400Hz誤差1%以内、雑音の誤検出なし、
+  - `node tests/check.mjs` 28件すべて通過（合成音でのF0精度80〜400Hz誤差1%以内、雑音の誤検出なし、
     1フレーム0.068ms＝rAF予算16.6msに対して余裕）
   - HTTPS公開後の実測: index/css/js/sw/manifest/icon すべて200、Service Worker がページを制御
   - **オクターブ誤検出を修正済み**（下記）
   - macOS Safari系エンジンに zh-TW 音声 Meijia が存在すること
 - **未検証（実機で確かめること）**:
-  - **iPhone実機でのマイク録音とF0抽出精度**（本番の中心機能。要HTTPS）
-  - iOS Safari の zh-TW 読み上げ（設定→アクセシビリティ→読み上げコンテンツ→声 に台湾の声が必要）
+  - **iPhone実機でのマイク録音とF0抽出精度**（1回目は失敗→v3で対策済み。2回目の確認待ち）
+  - ~~iOS Safari の zh-TW 読み上げ~~ → 実機で動作を本人確認済み（2026-08-18）
   - 耳だけモードの画面ロック中の連続再生（音声合成APIの制約で止まる可能性が高い）
-  - PWAとしてのホーム画面追加とオフライン起動
+  - ~~PWAとしてのホーム画面追加とオフライン起動~~ → 実機で本人確認済み（2026-08-18）
 
 ## フレーズの扱い（ハルシネーション対策）
 
