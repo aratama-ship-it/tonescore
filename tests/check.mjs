@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { DECKS, syllables, isPunct } from '../js/data/phrases.js';
 import { toBopomofo, toPinyinMarked, splitTone } from '../js/bopomofo.js';
 import { applySandhi, contour, judge } from '../js/tones.js';
-import { segment, normalize, medianHz, detect } from '../js/pitch.js';
+import { segment, normalize, medianHz, detect, smoothTrack } from '../js/pitch.js';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok', name); };
@@ -184,7 +184,52 @@ t('1フレームの処理が rAF の予算(16.6ms)に十分収まる', () => {
   assert.ok(ms < 4, `1フレーム ${ms.toFixed(2)}ms は重すぎる`);
 });
 
-console.log('\n[8] 音節展開');
+// iPhone実機（2026-08-18）で有声率3%しか出なかった条件を再現する回帰テスト。
+// 生の音声は「小さい」「雑音が乗る」「相関の山がぎざぎざ」の3つが同時に来る。
+const noisy = (f0, amp, snr) => {
+  const b = voiceBuf(f0, 48000, 2048, amp);
+  let seed = 7;
+  for (let i = 0; i < b.length; i++) {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    b[i] += (seed / 2147483648 - 0.5) * amp * 3 / snr;
+  }
+  return b;
+};
+t('小さい声（振幅0.02）でも検出できる', () => {
+  for (const f0 of [110, 165, 220]) {
+    const { hz } = detect(voiceBuf(f0, 48000, 2048, 0.02), 48000);
+    assert.ok(Math.abs(hz - f0) / f0 < 0.02, `${f0}Hz → ${hz.toFixed(1)}Hz`);
+  }
+});
+t('雑音混じり（SNR約10dB）でも検出でき、オクターブを外さない', () => {
+  for (const f0 of [110, 165, 220, 300]) {
+    const { hz } = detect(noisy(f0, 0.08, 3), 48000);
+    assert.ok(Math.abs(hz - f0) / f0 < 0.05, `${f0}Hz → ${hz.toFixed(1)}Hz`);
+  }
+});
+
+console.log('\n[8] F0トラックの整え');
+t('単発の飛びをメディアンで潰す', () => {
+  const f = [200, 202, 400, 201, 203].map((hz, i) => ({ t: i / 60, hz, rms: 0.1 }));
+  const s = smoothTrack(f).map((x) => x.hz);
+  assert.equal(s[2], 202, `飛びが残っている: ${s[2]}`);
+});
+t('前後が有声の1フレームの穴を埋める', () => {
+  const f = [200, 0, 210].map((hz, i) => ({ t: i / 60, hz, rms: 0.1 }));
+  assert.equal(smoothTrack(f)[1].hz, 205);
+});
+t('孤立した有声フレームは雑音として落とす', () => {
+  const f = [0, 300, 0].map((hz, i) => ({ t: i / 60, hz, rms: 0.1 }));
+  assert.equal(smoothTrack(f)[1].hz, 0);
+});
+t('整えても長さと時刻は変わらない', () => {
+  const f = [200, 0, 210, 400, 205].map((hz, i) => ({ t: i / 60, hz, rms: 0.1 }));
+  const s = smoothTrack(f);
+  assert.equal(s.length, f.length);
+  assert.deepEqual(s.map((x) => x.t), f.map((x) => x.t));
+});
+
+console.log('\n[9] 音節展開');
 t('句読点はピンインを消費しない', () => {
   const s = syllables({ zh: '謝謝，麻煩你了。', pinyin: 'xie4 xie5 ma2 fan5 ni3 le5' });
   assert.equal(s.filter((x) => !x.punct).length, 6);

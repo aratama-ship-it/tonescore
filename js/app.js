@@ -2,7 +2,7 @@
 import { DECKS, syllables, isPunct } from './data/phrases.js';
 import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js';
 import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js';
-import { PitchRecorder, medianHz, segment, normalize } from './pitch.js';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack } from './pitch.js';
 
 const $ = (s) => document.querySelector(s);
 const ST_MAX = 9.5; // レーンの上下限（半音）
@@ -261,14 +261,25 @@ function renderVerdicts() {
     lines.push('<b>全音節が規範の形と一致しました。</b>速度を上げて崩れないか確かめる。');
   }
   const d = state.diag;
-  lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz（この収録の中央値）`
-    + (d ? ` ／ 有声 ${Math.round((d.voiced / d.frames) * 100)}%・${d.frames}フレーム` : ''));
+  if (d) {
+    const pct = Math.round((d.voiced / d.frames) * 100);
+    lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz ／ 有声 ${pct}%・${d.frames}フレーム`);
+    if (pct < 25) {
+      lines.push('<b>声を拾えている割合が低い</b>。口をマイク（画面下端）に近づけ、'
+        + '母音を伸ばし気味に、少し大きめの声で言うと安定する。');
+    }
+  } else {
+    lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz（この収録の中央値）`);
+  }
   if (state.fallback) lines.push('音節の区切りを自動検出できず、有声区間を均等割にして表示しています。1音ずつ区切って言うと精度が上がります。');
+  // ★古い診断を先に消してから差し込む。
+  //   以前は挿入後に「最後の1つを残す」処理をしていたため、host.after() で先頭に入る新しい方が
+  //   消えて初回の表示が残り続けていた（実機で3回連続同じ数値が出た原因）。
+  document.querySelectorAll('.vd-detail').forEach((el) => el.remove());
   const box = document.createElement('p');
   box.className = 'vd-detail';
   box.innerHTML = lines.join('<br>');
   host.after(box);
-  document.querySelectorAll('.vd-detail').forEach((el, i, all) => { if (i < all.length - 1) el.remove(); });
 }
 
 /* ── 収録と解析 ─────────────────────────────────── */
@@ -298,7 +309,13 @@ async function startRec() {
   holding = true;
   mic.classList.add('rec');
   $('#micState').textContent = '録音中…';
-  rec.start();
+  // 収録中に「拾えているか」をその場で見せる。実機で無音判定に落ちていても気付ける
+  rec.start(({ hz, voicedRatio }) => {
+    if (!holding) return;
+    $('#micState').textContent = hz
+      ? `録音中… ${Math.round(hz)} Hz ／ 有声 ${Math.round(voicedRatio * 100)}%`
+      : `録音中… 声を拾えていません（有声 ${Math.round(voicedRatio * 100)}%）`;
+  });
 }
 
 function stopRec() {
@@ -310,10 +327,11 @@ function stopRec() {
   analyze(frames);
 }
 
-function analyze(frames) {
+function analyze(rawFrames) {
+  const frames = smoothTrack(rawFrames); // 単発の飛び・穴を整える
   const ref = medianHz(frames);
   if (!ref) {
-    $('#micState').textContent = '声が取れませんでした。もう一度';
+    $('#micState').textContent = '声が取れませんでした。口を画面下端に近づけて、もう一度';
     return;
   }
   state.refHz = ref;
@@ -322,7 +340,7 @@ function analyze(frames) {
   const n = state.syls.length;
   const { segs, exact, empty } = segment(frames, n);
   if (empty) {
-    $('#micState').textContent = '声が取れませんでした。もう一度';
+    $('#micState').textContent = '声が取れませんでした。口を画面下端に近づけて、もう一度';
     return;
   }
   state.fallback = !exact;

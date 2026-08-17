@@ -4,8 +4,11 @@
 
 const MIN_HZ = 70;
 const MAX_HZ = 420;
-const CLARITY = 0.62;   // 相関のしきい値。これ未満は無声とみなす
-const RMS_GATE = 0.012; // 無音ゲート
+// ★しきい値は iPhone 実機の実測で決めた値（2026-08-18）。
+//   初期値（CLARITY 0.62 / RMS_GATE 0.012）では実機で有声率が3%しか出ず、
+//   声のほとんどを無声として捨てていた。机上の値に戻さないこと。
+const CLARITY = 0.45;   // 相関のしきい値。これ未満は無声とみなす
+const RMS_GATE = 0.005; // 無音ゲート
 
 export class PitchRecorder {
   constructor() {
@@ -27,8 +30,10 @@ export class PitchRecorder {
     }
     if (this.ctx.state === 'suspended') await this.ctx.resume();
     if (!this.stream) {
+      // ノイズ抑制はピッチを崩すので切る。自動ゲインは音量を稼ぐため入れる
+      // （実機で入力が小さく、有声判定が落ちていたため 2026-08-18 に true へ変更）。
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
       });
       const src = this.ctx.createMediaStreamSource(this.stream);
       this.analyser = this.ctx.createAnalyser();
@@ -39,10 +44,12 @@ export class PitchRecorder {
     return this.ctx;
   }
 
-  start() {
+  /** @param onFrame 収録中の状態を返すコールバック（UIの手応え用。約100msごと） */
+  start(onFrame) {
     this.frames = [];
     this.running = true;
     this.t0 = performance.now();
+    let lastReport = 0;
     // 聞き比べ用に音声そのものも保存する（対応環境のみ）
     try {
       if (window.MediaRecorder && this.stream) {
@@ -57,7 +64,13 @@ export class PitchRecorder {
       if (!this.running) return;
       this.analyser.getFloatTimeDomainData(this.buf);
       const { hz, rms } = detect(this.buf, this.ctx.sampleRate);
-      this.frames.push({ t: (performance.now() - this.t0) / 1000, hz, rms });
+      const now = performance.now();
+      this.frames.push({ t: (now - this.t0) / 1000, hz, rms });
+      if (onFrame && now - lastReport > 100) {
+        lastReport = now;
+        const v = this.frames.filter((f) => f.hz > 0).length;
+        onFrame({ hz, rms, voicedRatio: v / this.frames.length, frames: this.frames.length });
+      }
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
@@ -121,11 +134,14 @@ export function detect(buf, sampleRate) {
   //   ラグが大きいほど重なる区間が短くなり正規化相関が持ち上がるため、
   //   最大値を採ると周期の2倍（1オクターブ下）を掴む。実測で147Hz→73.5Hzになった。
   const TH = bestCorr * 0.86;
-  let bestLag = -1;
+  let bestLag = -1, maxLagAt = minLag;
+  for (let lag = minLag; lag <= maxLag; lag++) if (corr[lag] === bestCorr) { maxLagAt = lag; break; }
   for (let lag = minLag + 1; lag < maxLag; lag++) {
-    if (corr[lag] >= TH && corr[lag] > corr[lag - 1] && corr[lag] >= corr[lag + 1]) { bestLag = lag; break; }
+    if (corr[lag] >= TH && corr[lag] >= corr[lag - 1] && corr[lag] >= corr[lag + 1]) { bestLag = lag; break; }
   }
-  if (bestLag < 0) return { hz: 0, rms };
+  // 実機の生音声では、雑音で山がぎざぎざになり「局所最大」条件に当てはまらないフレームが多い。
+  // そこで見つからない場合は最大値の位置へ落とす（フレームを捨てない方を優先する）。
+  if (bestLag < 0) bestLag = maxLagAt;
   bestCorr = corr[bestLag];
 
   // 放物線補間でラグを精密化（相関は上で計算済みのものを使う）
@@ -133,6 +149,27 @@ export function detect(buf, sampleRate) {
   const denom = 2 * (2 * y1 - y0 - y2);
   const shift = denom !== 0 ? (y2 - y0) / denom : 0;
   return { hz: sr / (bestLag + shift), rms };
+}
+
+/**
+ * F0トラックの整え。実機の生音声には単発の飛びと単発の取りこぼしが混ざる。
+ * ①有声の中を3点メディアンで平滑化 ②前後が有声な1フレームの穴を補間
+ * ③前後が無声な孤立した有声フレームは雑音とみなして落とす
+ */
+export function smoothTrack(frames) {
+  const hz = frames.map((f) => f.hz);
+  const out = hz.slice();
+  for (let i = 1; i < hz.length - 1; i++) {
+    const a = hz[i - 1], b = hz[i], c = hz[i + 1];
+    if (b > 0 && a > 0 && c > 0) {
+      out[i] = [a, b, c].sort((x, y) => x - y)[1];           // ①
+    } else if (b === 0 && a > 0 && c > 0) {
+      out[i] = (a + c) / 2;                                   // ②
+    } else if (b > 0 && a === 0 && c === 0) {
+      out[i] = 0;                                             // ③
+    }
+  }
+  return frames.map((f, i) => ({ ...f, hz: out[i] }));
 }
 
 /** 有声フレームの中央値Hz */
