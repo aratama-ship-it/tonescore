@@ -9,6 +9,7 @@ const MAX_HZ = 420;
 //   声のほとんどを無声として捨てていた。机上の値に戻さないこと。
 const CLARITY = 0.45;   // 相関のしきい値。これ未満は無声とみなす
 const RMS_GATE = 0.005; // 無音ゲート
+const SAMPLE_MS = 16;   // 取り込み間隔（約62回/秒）
 
 export class PitchRecorder {
   constructor() {
@@ -19,6 +20,7 @@ export class PitchRecorder {
     this.frames = [];
     this.running = false;
     this.recorder = null;
+    this.timer = null;
     this.chunks = [];
     this.lastBlobUrl = null;
   }
@@ -60,7 +62,11 @@ export class PitchRecorder {
         this.recorder.start();
       }
     } catch { this.recorder = null; }
-    const loop = () => {
+    // ★音声の取り込みは requestAnimationFrame ではなくタイマーで回す。
+    //   rAF は「描画」の都合で止まる／間引かれる：タブが非表示だと発火せず、
+    //   iPhone の低電力モードでは30fpsに落ちてサンプル密度が半分になる。
+    //   声調の形を追うのに描画の都合を持ち込まない。
+    const tick = () => {
       if (!this.running) return;
       this.analyser.getFloatTimeDomainData(this.buf);
       const { hz, rms } = detect(this.buf, this.ctx.sampleRate);
@@ -71,13 +77,16 @@ export class PitchRecorder {
         const v = this.frames.filter((f) => f.hz > 0).length;
         onFrame({ hz, rms, voicedRatio: v / this.frames.length, frames: this.frames.length });
       }
-      requestAnimationFrame(loop);
     };
-    requestAnimationFrame(loop);
+    clearInterval(this.timer);
+    this.timer = setInterval(tick, SAMPLE_MS);
+    tick(); // 1フレーム目を待たない
   }
 
   stop() {
     this.running = false;
+    clearInterval(this.timer);
+    this.timer = null;
     if (this.recorder && this.recorder.state !== 'inactive') {
       this.recorder.onstop = () => {
         if (this.lastBlobUrl) URL.revokeObjectURL(this.lastBlobUrl);

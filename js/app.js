@@ -5,6 +5,10 @@ import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones
 import { PitchRecorder, medianHz, segment, normalize, smoothTrack } from './pitch.js';
 
 const $ = (s) => document.querySelector(s);
+
+// ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
+//   index.html の ?v= と sw.js の VERSION と必ず揃える。
+const APP_VERSION = 'v4';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -263,7 +267,8 @@ function renderVerdicts() {
   const d = state.diag;
   if (d) {
     const pct = Math.round((d.voiced / d.frames) * 100);
-    lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz ／ 有声 ${pct}%・${d.frames}フレーム`);
+    lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz ／ 有声 ${pct}%`
+      + ` ／ ${d.frames}フレーム・${Math.round(d.fps)}回/秒`);
     if (pct < 25) {
       lines.push('<b>声を拾えている割合が低い</b>。口をマイク（画面下端）に近づけ、'
         + '母音を伸ばし気味に、少し大きめの声で言うと安定する。');
@@ -329,6 +334,23 @@ function stopRec() {
 
 function analyze(rawFrames) {
   const frames = smoothTrack(rawFrames); // 単発の飛び・穴を整える
+
+  // ★測れていないのに判定を出さない。
+  //   取り込みが間引かれると数フレームしか無いのに「0/8 音節が一致」と断定してしまう。
+  //   （タブが非表示、他アプリに切り替え、極端な低電力状態などで起きる）
+  const dur = frames.length ? frames[frames.length - 1].t : 0;
+  const fps = dur > 0 ? frames.length / dur : 0;
+  state.diag = null;
+  if (dur < 0.35) {
+    $('#micState').textContent = '短すぎます。押したまま最後まで言い切ってください';
+    return;
+  }
+  if (fps < 25) {
+    $('#micState').textContent =
+      `取り込みが ${Math.round(fps)}回/秒 に間引かれました。画面を表示したまま、もう一度`;
+    return;
+  }
+
   const ref = medianHz(frames);
   if (!ref) {
     $('#micState').textContent = '声が取れませんでした。口を画面下端に近づけて、もう一度';
@@ -336,7 +358,7 @@ function analyze(rawFrames) {
   }
   state.refHz = ref;
   // 実機で問題が出たときに原因を切り分けるための素の数値
-  state.diag = { frames: frames.length, voiced: frames.filter((f) => f.hz > 0).length };
+  state.diag = { frames: frames.length, voiced: frames.filter((f) => f.hz > 0).length, fps };
   const n = state.syls.length;
   const { segs, exact, empty } = segment(frames, n);
   if (empty) {
@@ -530,13 +552,26 @@ window.addEventListener('resize', () => requestAnimationFrame(() => { sizeCanvas
 
 /* ── 起動 ───────────────────────────────────────── */
 // 検証用フック（マイクなしで解析→描画の経路を確かめるため）
-window.__tonescore = { state, analyze, drawLane };
+window.__tonescore = { state, analyze, drawLane, rec };
 
 renderList();
 renderVoiceSel();
 refresh();
 setTimeout(() => { loadVoices(); renderVoiceSel(); }, 400); // 音声一覧は遅れて届くことがある
 
+$('#ver').textContent = APP_VERSION;
+
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js?v=1').catch(() => {});
+  // ★スクリプトURLに ?v= を付けない。付けると更新のたびに別の登録になり、
+  //   古い Service Worker が生き残って更新が届かなくなる。
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    reg.update().catch(() => {});
+    // 新しいSWが制御を取ったら一度だけ読み直す（更新が1回遅れるのを防ぐ）
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
+  }).catch(() => {});
 }
