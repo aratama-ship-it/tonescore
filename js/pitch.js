@@ -25,26 +25,44 @@ export class PitchRecorder {
     this.lastBlobUrl = null;
   }
 
+  /**
+   * マイクと解析グラフを用意する。所要時間を this.timing に記録する（体感を推測で語らないため）。
+   * ★AudioContext の生成と resume はユーザー操作と同じタスクの中で始める（iOSの制約）。
+   *   ただし resume は await しない。許可ダイアログを出している間に裏で進ませる。
+   */
   async ensure() {
+    const t0 = performance.now();
+    const first = !this.stream;
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AC();
     }
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+
+    let permMs = 0;
     if (!this.stream) {
+      // 読み上げが鳴っていると、iOSではオーディオセッションの奪い合いで待たされる
+      try { window.speechSynthesis?.cancel?.(); } catch { /* 無視 */ }
+      const tp = performance.now();
       // ノイズ抑制はピッチを崩すので切る。自動ゲインは音量を稼ぐため入れる
       // （実機で入力が小さく、有声判定が落ちていたため 2026-08-18 に true へ変更）。
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
       });
+      permMs = performance.now() - tp;
       const src = this.ctx.createMediaStreamSource(this.stream);
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 2048;
       this.buf = new Float32Array(this.analyser.fftSize);
       src.connect(this.analyser);
     }
+    if (this.ctx.state === 'suspended') { try { await this.ctx.resume(); } catch { /* 無視 */ } }
+    this.timing = { first, permMs: Math.round(permMs), totalMs: Math.round(performance.now() - t0) };
     return this.ctx;
   }
+
+  /** 用意ができているか（毎回の押下で待たされないための判定） */
+  get ready() { return !!this.stream && !!this.analyser; }
 
   /** @param onFrame 収録中の状態を返すコールバック（UIの手応え用。約100msごと） */
   start(onFrame) {
@@ -52,16 +70,6 @@ export class PitchRecorder {
     this.running = true;
     this.t0 = performance.now();
     let lastReport = 0;
-    // 聞き比べ用に音声そのものも保存する（対応環境のみ）
-    try {
-      if (window.MediaRecorder && this.stream) {
-        this.chunks = [];
-        const mime = ['audio/mp4', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m));
-        this.recorder = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
-        this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
-        this.recorder.start();
-      }
-    } catch { this.recorder = null; }
     // ★音声の取り込みは requestAnimationFrame ではなくタイマーで回す。
     //   rAF は「描画」の都合で止まる／間引かれる：タブが非表示だと発火せず、
     //   iPhone の低電力モードでは30fpsに落ちてサンプル密度が半分になる。
@@ -81,6 +89,21 @@ export class PitchRecorder {
     clearInterval(this.timer);
     this.timer = setInterval(tick, SAMPLE_MS);
     tick(); // 1フレーム目を待たない
+
+    // 聞き比べ用の録音は「あると嬉しい」機能。MediaRecorder の起動は iOS で
+    // 数百ms かかることがあるため、解析の開始を待たせないよう後回しにする。
+    setTimeout(() => {
+      if (!this.running) return;
+      try {
+        if (window.MediaRecorder && this.stream) {
+          this.chunks = [];
+          const mime = ['audio/mp4', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m));
+          this.recorder = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
+          this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
+          this.recorder.start();
+        }
+      } catch { this.recorder = null; }
+    }, 0);
   }
 
   stop() {

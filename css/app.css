@@ -186,6 +186,18 @@ body {
 .btn-wide { width: 100%; }
 .btn.playing { border-color: var(--model); }
 
+/* 初回のマイク準備。押した瞬間に待たされる体験を、明示的な一度きりの手順に置き換える */
+.prep {
+  width: 100%; margin: 14px 0 0; padding: 14px 12px;
+  appearance: none; background: transparent; color: var(--paper);
+  border: 1px dashed var(--line-2); border-radius: 3px; font-family: inherit;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.prep-t { font-size: 13.5px; }
+.prep-s { font-size: 9.5px; color: var(--muted); }
+.prep:active { background: rgba(236,230,220,.06); }
+.prep[data-state="working"] { border-style: solid; border-color: var(--model); }
+
 /* 押している間だけ録音するボタン。中心の1動作なので最大面積を与える */
 .mic {
   position: relative; display: flex; flex-direction: column;

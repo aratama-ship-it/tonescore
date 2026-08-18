@@ -8,7 +8,7 @@ const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v4';
+const APP_VERSION = 'v5';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -268,7 +268,8 @@ function renderVerdicts() {
   if (d) {
     const pct = Math.round((d.voiced / d.frames) * 100);
     lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz ／ 有声 ${pct}%`
-      + ` ／ ${d.frames}フレーム・${Math.round(d.fps)}回/秒`);
+      + ` ／ ${d.frames}フレーム・${Math.round(d.fps)}回/秒`
+      + (d.prepMs ? ` ／ 準備 ${d.prepMs}ms` : ''));
     if (pct < 25) {
       lines.push('<b>声を拾えている割合が低い</b>。口をマイク（画面下端）に近づけ、'
         + '母音を伸ばし気味に、少し大きめの声で言うと安定する。');
@@ -295,19 +296,25 @@ let holding = false;   // 実際に録音中か
 async function startRec() {
   if (holding) return;
   pressed = true;
-  const first = !rec.stream;
+  const first = !rec.ready;
+  // 押した瞬間に見た目を変える（準備待ちでも「反応していない」と感じさせない）
+  mic.classList.add('rec');
   if (first) $('#micState').textContent = 'マイクの許可を確認中…';
   try {
     await rec.ensure();
   } catch (e) {
     pressed = false;
+    mic.classList.remove('rec');
     $('#micState').textContent = 'マイクを使えません。ブラウザの許可を確認してください';
+    refreshPrep();
     return;
   }
+  refreshPrep();
   // 許可ダイアログを操作している間に指が離れていることがある（初回に必ず起きる）
   if (!pressed) {
+    mic.classList.remove('rec');
     $('#micState').textContent = first
-      ? 'マイクを使えます。もう一度、押しながら話してください'
+      ? `マイクを使えます（準備 ${(rec.timing.totalMs / 1000).toFixed(1)}秒）。もう一度、押しながら話してください`
       : 'マイクを使います';
     return;
   }
@@ -358,7 +365,12 @@ function analyze(rawFrames) {
   }
   state.refHz = ref;
   // 実機で問題が出たときに原因を切り分けるための素の数値
-  state.diag = { frames: frames.length, voiced: frames.filter((f) => f.hz > 0).length, fps };
+  state.diag = {
+    frames: frames.length,
+    voiced: frames.filter((f) => f.hz > 0).length,
+    fps,
+    prepMs: rec.timing?.first ? rec.timing.totalMs : 0,
+  };
   const n = state.syls.length;
   const { segs, exact, empty } = segment(frames, n);
   if (empty) {
@@ -390,6 +402,26 @@ function animateIn() {
   };
   requestAnimationFrame(tick);
 }
+
+/* 初回のマイク準備を明示的な手順にする（押した瞬間の待ちを隠さない） */
+const prep = $('#micPrep');
+function refreshPrep() { prep.hidden = rec.ready; }
+prep.addEventListener('click', async () => {
+  prep.dataset.state = 'working';
+  prep.querySelector('.prep-t').textContent = '許可を待っています…';
+  try {
+    await rec.ensure();
+  } catch {
+    prep.dataset.state = '';
+    prep.querySelector('.prep-t').textContent = 'マイクを準備する';
+    prep.querySelector('.prep-s').textContent = '許可されませんでした。ブラウザの設定を確認してください';
+    return;
+  }
+  const t = rec.timing;
+  $('#micState').textContent = `準備できました（${(t.totalMs / 1000).toFixed(1)}秒）`;
+  refreshPrep();
+});
+refreshPrep();
 
 mic.addEventListener('pointerdown', (e) => { e.preventDefault(); startRec(); });
 mic.addEventListener('pointerup', stopRec);

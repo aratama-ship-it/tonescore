@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#0F1216">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="manifest.json?v=4">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=4">
-<link rel="stylesheet" href="css/app.css?v=4">
+<link rel="manifest" href="manifest.json?v=5">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=5">
+<link rel="stylesheet" href="css/app.css?v=5">
 </head>
 <body>
 
@@ -57,6 +57,11 @@
         <span class="btn-t">中文を聞く</span><span class="btn-s">台湾華語の音声</span>
       </button>
     </div>
+
+    <button class="prep" id="micPrep" hidden>
+      <span class="prep-t">マイクを準備する</span>
+      <span class="prep-s">初回だけ。許可のダイアログが出ます</span>
+    </button>
 
     <button class="mic" id="mic">
       <span class="mic-ring"></span>
@@ -127,6 +132,6 @@
   <button data-view="list" class="tab"><span>集</span>フレーズ</button>
 </nav>
 
-<script type="module" src="js/app.js?v=4"></script>
+<script type="module" src="js/app.js?v=5"></script>
 </body>
 </html>

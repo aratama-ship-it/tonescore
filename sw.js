@@ -4,18 +4,18 @@
 // ★HTMLは「ネットワーク優先」。ここをキャッシュ優先にすると、更新しても端末が
 //   古いHTML（＝古い ?v= 参照）を返し続け、更新が常に1回遅れる。
 //   実機で v3 を配信済みなのに v2 が動いていた原因がこれ（2026-08-18）。
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `tonescore-${VERSION}`;
 const ASSETS = [
   './',
   './index.html',
-  './css/app.css?v=4',
-  './js/app.js?v=4',
+  './css/app.css?v=5',
+  './js/app.js?v=5',
   './js/tones.js',
   './js/pitch.js',
   './js/bopomofo.js',
   './js/data/phrases.js',
-  './manifest.json?v=4',
+  './manifest.json?v=5',
 ];
 
 self.addEventListener('install', (e) => {
