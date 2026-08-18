@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { DECKS, syllables, isPunct } from '../js/data/phrases.js';
 import { toBopomofo, toPinyinMarked, splitTone } from '../js/bopomofo.js';
 import { applySandhi, contour, judge } from '../js/tones.js';
-import { segment, normalize, medianHz, detect, smoothTrack, decideVoicing } from '../js/pitch.js';
+import { segment, normalize, medianHz, detect, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from '../js/pitch.js';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok', name); };
@@ -244,7 +244,47 @@ t('整えても長さと時刻は変わらない', () => {
   assert.deepEqual(s.map((x) => x.t), f.map((x) => x.t));
 });
 
-console.log('\n[9] 有声判定（収録全体を見た相対値）');
+// ★実機報告（2026-08-18）「発音の最後がどうやっても上に跳ね上がる」の回帰テスト。
+//   指を離す瞬間の音（タップ音・声の減衰）で周期推定が短い側へ飛ぶ。
+t('末尾の跳ね上がりで第四声の判定がひっくり返らない', () => {
+  const n = 24;
+  const withSpike = Array.from({ length: n }, (_, i) => {
+    const u = i / (n - 1);
+    return { t: u, st: i >= n - 2 ? 9 : 6 - 12 * u }; // 最後の2フレームだけ跳ね上がる
+  });
+  const clean = withSpike.map((p, i) => ({ ...p, st: i >= n - 2 ? 6 - 12 * (i / (n - 1)) : p.st }));
+  assert.ok(judge(4, clean).ok, '跳ね上がりなしで落ちていると判定されない');
+  assert.ok(judge(4, withSpike).ok, `跳ね上がりで判定が壊れた: ${judge(4, withSpike).label}`);
+});
+t('末尾の跳ね上がりで第一声が「平らでない」と言われない', () => {
+  const n = 24;
+  const c = Array.from({ length: n }, (_, i) => ({ t: i / (n - 1), st: i >= n - 2 ? 9 : 6 }));
+  assert.ok(judge(1, c).ok, judge(1, c).label);
+});
+t('1フレームだけの飛びで判定が動かない（中央値で見る）', () => {
+  const n = 24;
+  const c = Array.from({ length: n }, (_, i) => ({ t: i / (n - 1), st: i === 3 ? -9 : 6 }));
+  assert.ok(judge(1, c).ok, judge(1, c).label);
+});
+
+console.log('\n[9] 収録の端と外れ値');
+t('押し始めと離し際を無声にする', () => {
+  const f = Array.from({ length: 50 }, (_, i) => ({ t: i * 0.02, hz: 200, rms: 0.05 }));
+  const r = trimEdges(f); // 既定 頭0.04秒 / 尾0.12秒
+  assert.equal(r[0].hz, 0, '頭が残っている');
+  assert.equal(r[1].hz, 0);
+  assert.ok(r[10].hz > 0, '中央まで削っている');
+  assert.equal(r[r.length - 1].hz, 0, '尾が残っている');
+  assert.equal(r[r.length - 5].hz, 0, '尾の削りが足りない');
+});
+t('中央値から7半音以上外れたF0を捨てる', () => {
+  const f = [200, 205, 400, 198, 202].map((hz, i) => ({ t: i * 0.02, hz, rms: 0.05 }));
+  const r = rejectOutliers(f);
+  assert.equal(r[2].hz, 0, 'オクターブ上の飛びが残っている');
+  assert.ok(r[0].hz > 0 && r[4].hz > 0, '正常なフレームまで捨てている');
+});
+
+console.log('\n[10] 有声判定（収録全体を見た相対値）');
 const frs = (spec) => spec.map(([hz, rms], i) => ({ t: i * 0.02, hz, rms, clarity: 0.7 }));
 t('小さすぎる部分を無声にする', () => {
   const r = decideVoicing(frs([[200, 0.10], [200, 0.10], [200, 0.002], [200, 0.09]]));
@@ -260,7 +300,7 @@ t('全部が無音なら全部無声', () => {
   assert.ok(decideVoicing(frs([[0, 0], [0, 0]])).every((x) => x.hz === 0));
 });
 
-console.log('\n[10] 音節への割り当て');
+console.log('\n[11] 音節への割り当て');
 // 声のかたまりを n 個作る（1つあたり 0.3秒、間に無声 gapFrames）
 const speech = (n, gapFrames = 8) => {
   const out = []; let t = 0;
@@ -298,7 +338,7 @@ t('有声が無ければ empty', () => {
   assert.equal(segment([{ t: 0, hz: 0, rms: 0 }], 2).empty, true);
 });
 
-console.log('\n[11] 音節展開');
+console.log('\n[12] 音節展開');
 t('句読点はピンインを消費しない', () => {
   const s = syllables({ zh: '謝謝，麻煩你了。', pinyin: 'xie4 xie5 ma2 fan5 ni3 le5' });
   assert.equal(s.filter((x) => !x.punct).length, 6);

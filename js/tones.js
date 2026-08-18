@@ -99,11 +99,21 @@ export function playToneMelody(ctx, tones, baseHz = 165, perSyl = 0.5) {
  */
 export function judge(tone, curve) {
   if (!curve || curve.length < 4) return { ok: false, label: '—', detail: '声が取れませんでした' };
-  const st = curve.map((p) => p.st);
-  const head = avg(st.slice(0, Math.max(2, Math.round(st.length * 0.2))));
-  const tail = avg(st.slice(-Math.max(2, Math.round(st.length * 0.2))));
-  const min = Math.min(...st);
-  const max = Math.max(...st);
+  // ★端は乱れやすい。ただし**頭と尾で落とす量を変える**。
+  //   尾は「指を離す瞬間」の音が混ざって跳ね上がるので厚く落とす（12%）。
+  //   頭を厚く落とすと三声の谷（下がってから上がる）を見失うので軽くする（5%）。
+  const all = curve.map((p) => p.st);
+  const long = all.length >= 8;
+  const kH = long ? Math.max(1, Math.round(all.length * 0.05)) : 0;
+  const kT = long ? Math.max(1, Math.round(all.length * 0.12)) : 0;
+  const st = long ? all.slice(kH, all.length - kT) : all;
+  if (st.length < 3) return { ok: false, label: '—', detail: '声が短すぎます' };
+  const w = Math.max(2, Math.round(st.length * 0.25));
+  const head = med(st.slice(0, w));
+  const tail = med(st.slice(-w));
+  // ★最小・最大も外れ値に弱い。1フレームの飛びで「平らでない」と言わないよう分位点で見る。
+  const min = pct(st, 0.08);
+  const max = pct(st, 0.92);
   const delta = tail - head;
   const range = max - min;
   const f1 = (v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
@@ -137,4 +147,12 @@ export function judge(tone, curve) {
   function ng(label, detail) { return { ok: false, label, detail }; }
 }
 
-const avg = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+const pct = (a, q) => {
+  const x = [...a].sort((p, r) => p - r);
+  return x[Math.min(x.length - 1, Math.max(0, Math.round((x.length - 1) * q)))];
+};
+const med = (a) => {
+  const x = [...a].sort((p, q) => p - q);
+  const m = Math.floor(x.length / 2);
+  return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2;
+};

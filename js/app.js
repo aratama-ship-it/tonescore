@@ -1,14 +1,14 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js?v=7';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=7';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=7';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing } from './pitch.js?v=7';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=8';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=8';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=8';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=8';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v7';
+const APP_VERSION = 'v8';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -218,6 +218,12 @@ function drawLane() {
     cx.fillText(`${s.realized === 5 ? '軽' : s.realized}${s.sandhi ? '←3' : ''}`, colW * (i + .5), h - 6);
   }
 
+  // 聴き直し中の列を光らせる（どこを鳴らしているか分かるように）
+  if (state.playing >= 0) {
+    cx.fillStyle = 'rgba(88,194,177,.10)';
+    cx.fillRect(colW * state.playing, 0, colW, h);
+  }
+
   const inset = Math.min(14, colW * 0.16);
   const px = (i, t) => colW * i + inset + t * (colW - inset * 2);
 
@@ -265,7 +271,7 @@ function renderVerdicts() {
   host.style.gridTemplateColumns = `repeat(${Math.max(1, state.syls.length)}, 1fr)`;
   if (!state.user) {
     host.innerHTML = '';
-    detail.innerHTML = '押している間だけ録音します。1フレーズを一息で。';
+    detail.innerHTML = '押している間だけ録音します。1フレーズを一息で。<br>文字やレーンをタップすると、その音節だけ聴き直せます。';
     return;
   }
   host.innerHTML = state.user.map((u) => `
@@ -275,9 +281,10 @@ function renderVerdicts() {
     </div>`).join('');
 
   const worst = state.user.find((u) => !u.verdict.ok);
-  detail.innerHTML = worst
+  detail.innerHTML = (worst
     ? `<b>${worst.syl.char}（${TONE_NAMES[worst.syl.realized]}）</b> ${worst.verdict.label} — ${worst.verdict.detail}`
-    : '<b>全音節が規範の形と一致しました。</b>速度を上げて崩れないか確かめる。';
+    : '<b>全音節が規範の形と一致しました。</b>速度を上げて崩れないか確かめる。')
+    + '<br>文字やレーンをタップすると、その音節だけ聴き直せます。';
   if (!$('#sheet').hidden) renderSheet();
 }
 
@@ -307,6 +314,12 @@ function renderSheet() {
     if (pct < 25) {
       lines.push('<b>声を拾えている割合が低い。</b>口をマイク（画面下端）に近づけ、'
         + '母音を伸ばし気味に、少し大きめの声で言うと安定する。');
+    }
+    if (state.user) {
+      lines.push('<hr><b>音節ごとの割り当て</b>（タップでその部分だけ聴き直せる）<br>'
+        + state.user.map((u) => (u.seg
+          ? `${u.syl.char} ${u.seg.from.toFixed(2)}–${u.seg.to.toFixed(2)}秒（${Math.round((u.seg.to - u.seg.from) * 1000)}ms）`
+          : `${u.syl.char} 割り当てなし`)).join('<br>'));
     }
   }
   $('#sheetBody').innerHTML = lines.join('<br>');
@@ -373,8 +386,8 @@ function stopRec() {
 }
 
 function analyze(rawFrames) {
-  // 有声判定は収録全体の音量を見てから決め、そのあとで単発の飛び・穴を整える
-  const frames = smoothTrack(decideVoicing(rawFrames));
+  // 有声判定 → 端（押し始め・離し際）を落とす → 単発の飛び・穴を整える → 外れ値を捨てる
+  const frames = rejectOutliers(smoothTrack(trimEdges(decideVoicing(rawFrames))));
 
   // ★測れていないのに判定を出さない。
   //   取り込みが間引かれると数フレームしか無いのに「0/8 音節が一致」と断定してしまう。
@@ -415,7 +428,7 @@ function analyze(rawFrames) {
   state.seginfo = { detected, adjusted };
   state.user = state.syls.map((s, i) => {
     const curve = normalize(segs[i], ref);
-    return { syl: s, curve, verdict: judge(s.realized, curve) };
+    return { syl: s, curve, seg: segs[i] && { from: segs[i].from, to: segs[i].to }, verdict: judge(s.realized, curve) };
   });
   const okCount = state.user.filter((u) => u.verdict.ok).length;
   $('#micState').textContent = `${okCount} / ${n} 音節が一致`;
@@ -486,9 +499,76 @@ $('#btnSpeak').addEventListener('click', async () => {
 let mineAudio = null;
 function playMine() {
   if (!rec.lastBlobUrl) return Promise.resolve();
+  stopMine();
   mineAudio = new Audio(rec.lastBlobUrl);
   return new Promise((r) => { mineAudio.onended = r; mineAudio.onerror = r; mineAudio.play().catch(r); });
 }
+function stopMine() {
+  if (mineAudio) { try { mineAudio.pause(); } catch { /* 無視 */ } mineAudio = null; }
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+}
+
+/* ── 音節ごとの聴き直し ─────────────────────────────
+   「その文字がちゃんと録れているか」を耳で確かめられるようにする。
+   解析の時刻（t=0＝押した瞬間）と録音音声の0秒はズレるので rec.recOffset で補正する。 */
+let playTimer = null;
+state.playing = -1;
+
+function playSyllable(i) {
+  const u = state.user?.[i];
+  if (!u) return;
+  stopMine();
+  state.playing = i;
+  drawLane();
+
+  const seg = u.seg;
+  if (!seg || !rec.lastBlobUrl) {
+    // 録音が無い場合は、その音節の規範の旋律を鳴らす（無反応にしない）
+    playToneMelody(getCtx(), [u.syl.realized], state.refHz || 165, 0.6);
+    playTimer = setTimeout(() => { state.playing = -1; drawLane(); }, 700);
+    return;
+  }
+  const pad = 0.06;
+  const from = Math.max(0, seg.from - rec.recOffset - pad);
+  const dur = (seg.to - seg.from) + pad * 2;
+  const a = new Audio(rec.lastBlobUrl);
+  mineAudio = a;
+
+  const begin = () => {
+    try { a.currentTime = from; } catch { /* 後で検知する */ }
+    a.play().then(() => {
+      // MediaRecorder が作った音声は長さ情報を持たないことがあり、その場合シークが効かない。
+      // 効いていなければ黙って頭から流さず、そう伝える。
+      if (from > 0.15 && a.currentTime < from - 0.15) {
+        $('#micState').textContent = 'この端末では音節ごとの頭出しができません（全体を再生します）';
+      }
+      playTimer = setTimeout(() => {
+        try { a.pause(); } catch { /* 無視 */ }
+        state.playing = -1; drawLane();
+      }, dur * 1000);
+    }).catch(() => { state.playing = -1; drawLane(); });
+  };
+  if (a.readyState >= 1) begin();
+  else a.addEventListener('loadedmetadata', begin, { once: true });
+}
+
+/** レーンの列をタップ → その音節だけ聴き直す */
+cv.addEventListener('click', (e) => {
+  if (!state.syls.length) return;
+  const r = cv.getBoundingClientRect();
+  const i = Math.min(state.syls.length - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * state.syls.length)));
+  playSyllable(i);
+});
+$('#verdicts').addEventListener('click', (e) => {
+  const el = e.target.closest('.vd');
+  if (!el) return;
+  playSyllable([...$('#verdicts').children].indexOf(el));
+});
+$('#hanzi').addEventListener('click', (e) => {
+  const el = e.target.closest('.syl');
+  if (!el) return;
+  playSyllable([...$('#hanzi').children].indexOf(el));
+});
 $('#btnPlayMine').addEventListener('click', playMine);
 $('#btnAB').addEventListener('click', async () => {
   await speak(currentItem().zh, { rate: 0.8 });
@@ -512,6 +592,8 @@ $('#prev').addEventListener('click', () => go(-1));
 $('#next').addEventListener('click', () => go(1));
 
 function refresh() {
+  stopMine();
+  state.playing = -1;
   build();
   renderText();
   renderVerdicts();

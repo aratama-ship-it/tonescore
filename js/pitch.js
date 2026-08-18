@@ -23,6 +23,7 @@ export class PitchRecorder {
     this.running = false;
     this.recorder = null;
     this.timer = null;
+    this.recOffset = 0; // 解析の t=0 と、録音音声の 0秒 とのズレ（秒）
     this.chunks = [];
     this.lastBlobUrl = null;
   }
@@ -99,6 +100,7 @@ export class PitchRecorder {
       try {
         if (window.MediaRecorder && this.stream) {
           this.chunks = [];
+          this.recOffset = (performance.now() - this.t0) / 1000;
           const mime = ['audio/mp4', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m));
           this.recorder = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
           this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
@@ -183,6 +185,32 @@ export function detect(buf, sampleRate) {
   const denom = 2 * (2 * y1 - y0 - y2);
   const shift = denom !== 0 ? (y2 - y0) / denom : 0;
   return { hz: sr / (bestLag + shift), rms, clarity: bestCorr };
+}
+
+/**
+ * 収録の端を切り落とす。
+ * ★押し始めと「指を離す瞬間」は声ではない音（タップ音、声の減衰、息）が混ざり、
+ *   周期推定が短い側へ飛んで**カーブの最後が跳ね上がる**（2026-08-18の実機で報告）。
+ *   離し際のほうが害が大きいので厚めに落とす。
+ */
+export function trimEdges(frames, headSec = 0.04, tailSec = 0.12) {
+  if (!frames.length) return frames;
+  const end = frames[frames.length - 1].t;
+  return frames.map((f) => (f.t < headSec || f.t > end - tailSec ? { ...f, hz: 0 } : f));
+}
+
+/**
+ * 収録全体の中央値から大きく外れたF0を捨てる。
+ * 声の高さが一息の中で1オクターブ以上動くことはない。飛んでいるなら推定を外している。
+ */
+export function rejectOutliers(frames, maxSemitones = 7) {
+  const ref = medianHz(frames);
+  if (!ref) return frames;
+  return frames.map((f) => {
+    if (!f.hz) return f;
+    const st = Math.abs(12 * Math.log2(f.hz / ref));
+    return st > maxSemitones ? { ...f, hz: 0 } : f;
+  });
 }
 
 /**
