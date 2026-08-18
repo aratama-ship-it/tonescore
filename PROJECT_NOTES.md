@@ -1,6 +1,6 @@
 # 聲調譜 TONESCORE — 台湾華語のリスニング＋発音アプリ
 
-最終更新: 2026-08-18（実機2回目を反映。v6配信：相対値での有声判定・音節割り当ての作り直し・1画面UI・ピンイン表示）
+最終更新: 2026-08-18（実機2回目を反映。v7配信：相対値での有声判定・音節割り当ての作り直し・1画面UI・ピンイン表示）
 公開URL: https://aratama-ship-it.github.io/tonescore/ （GitHub Pages / main / ルート・公開リポジトリ）
 リポジトリ: https://github.com/aratama-ship-it/tonescore
 （作業ツリーはiCloud上、gitディレクトリは `~/git-repos/tonescore` に分離 = iCloud破損対策）
@@ -203,6 +203,24 @@ PWA（ホーム画面追加・オフライン起動）は本人確認済みで�
 - 判定の詳細は固定要素（`#vdDetail`）に書き込む方式へ。動的挿入をやめ、
   以前の「古い診断が残る」バグの再発余地をなくした。
 - 前後の移動は下段の ← → に統合（行数を減らすため）。
+
+## ★配信物の取り違え（v6→v7・2026-08-18）
+
+v6を配信した直後、公開ページが**起動しなくなった**。
+`does not provide an export named 'decideVoicing'` ——
+**新しい app.js と、キャッシュに残った古い pitch.js** が組み合わさっていた。
+
+`?v=` を付けられるのは HTML から参照する物だけで、**ESモジュールの import 先には
+付け忘れが起きる**。付け忘れても壊れない側へ倒した。
+
+- Service Worker を**すべてネットワーク優先**へ（キャッシュはオフライン時の保険だけ）。
+- import 先にも `?v=` を付ける（二重の保険）。
+- ★**版ずれを機械的に検出するテスト**を追加（`tests/check.mjs` の [0]）。
+  `index.html` の `?v=` / `sw.js` の `VERSION` / `app.js` の `APP_VERSION` /
+  import先 / `sw.js` の ASSETS を突き合わせる。**以後この事故はテストで止まる。**
+
+版を上げるときは4か所を揃える：`index.html` の `?v=`、`sw.js` の `VERSION` と ASSETS、
+`js/app.js` の `APP_VERSION` と import 先。揃っていなければテストが落ちる。
 
 ## iPhone実機チェックリスト（3回目。ここから）
 
