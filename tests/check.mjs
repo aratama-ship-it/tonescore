@@ -9,6 +9,34 @@ import { segment, normalize, medianHz, detect, smoothTrack, decideVoicing } from
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok', name); };
 
+console.log('\n[0] 版の整合（配信物の取り違え防止）');
+// ★新しいHTML＋古いJSの組み合わせで起動不能になった事故（2026-08-18）の再発防止。
+//   index.html の ?v= / sw.js の VERSION / app.js の APP_VERSION / import先の ?v= を突き合わせる。
+{
+  const { readFileSync } = await import('node:fs');
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const html = read('../index.html'), sw = read('../sw.js'), app = read('../js/app.js');
+  const appVer = app.match(/APP_VERSION = '(v\d+)'/)[1];
+  const swVer = sw.match(/VERSION = '(v\d+)'/)[1];
+  const n = appVer.slice(1);
+  t(`index.html / sw.js / app.js の版が揃っている（${appVer}）`, () => {
+    assert.equal(swVer, appVer, `sw.js=${swVer} app.js=${appVer}`);
+    const htmlVers = [...new Set(html.match(/\?v=\d+/g) || [])];
+    assert.deepEqual(htmlVers, [`?v=${n}`], `index.html の ?v= が不揃い: ${htmlVers.join(',')}`);
+  });
+  t('app.js の import 先すべてに版が付いている', () => {
+    const imports = app.match(/from '\.\/[^']+'/g) || [];
+    for (const im of imports) {
+      assert.ok(im.includes(`?v=${n}`), `版が付いていない import: ${im}`);
+    }
+  });
+  t('sw.js の ASSETS が import 先と同じURLを指している', () => {
+    for (const f of ['tones.js', 'pitch.js', 'bopomofo.js', 'data/phrases.js']) {
+      assert.ok(sw.includes(`./js/${f}?v=${n}`), `sw.js の ASSETS に ./js/${f}?v=${n} がない`);
+    }
+  });
+}
+
 console.log('\n[1] フレーズデータの整合');
 t('全項目で漢字数とピンイン数が一致する', () => {
   for (const d of DECKS) {

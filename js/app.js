@@ -1,14 +1,14 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing } from './pitch.js';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=7';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=7';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=7';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing } from './pitch.js?v=7';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
