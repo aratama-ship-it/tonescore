@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { DECKS, syllables, isPunct } from '../js/data/phrases.js';
 import { toBopomofo, toPinyinMarked, splitTone } from '../js/bopomofo.js';
 import { applySandhi, contour, judge } from '../js/tones.js';
-import { segment, normalize, medianHz, detect, smoothTrack } from '../js/pitch.js';
+import { segment, normalize, medianHz, detect, smoothTrack, decideVoicing } from '../js/pitch.js';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok', name); };
@@ -124,19 +124,6 @@ const frames = [];
     for (let i = 0; i < 9; i++) { frames.push({ t: t0, hz: 0, rms: 0.001 }); t0 += 1 / 60; }
   }
 }
-t('期待数と一致すれば exact', () => {
-  const r = segment(frames, 3);
-  assert.equal(r.segs.length, 3);
-  assert.equal(r.exact, true);
-});
-t('一致しなければ均等割へフォールバックし、区間数は期待どおり', () => {
-  const r = segment(frames, 5);
-  assert.equal(r.exact, false);
-  assert.equal(r.segs.length, 5);
-});
-t('無声のみなら empty', () => {
-  assert.equal(segment([{ t: 0, hz: 0, rms: 0 }], 2).empty, true);
-});
 t('中央値と半音正規化', () => {
   assert.equal(medianHz(frames), 210);
   const seg = { from: 0, to: 1, pts: [{ t: 0, hz: 100 }, { t: 1, hz: 200 }] };
@@ -229,7 +216,61 @@ t('整えても長さと時刻は変わらない', () => {
   assert.deepEqual(s.map((x) => x.t), f.map((x) => x.t));
 });
 
-console.log('\n[9] 音節展開');
+console.log('\n[9] 有声判定（収録全体を見た相対値）');
+const frs = (spec) => spec.map(([hz, rms], i) => ({ t: i * 0.02, hz, rms, clarity: 0.7 }));
+t('小さすぎる部分を無声にする', () => {
+  const r = decideVoicing(frs([[200, 0.10], [200, 0.10], [200, 0.002], [200, 0.09]]));
+  assert.deepEqual(r.map((x) => x.hz > 0), [true, true, false, true]);
+});
+t('入力レベルが10分の1でも同じ判定になる（絶対値で切らない）', () => {
+  const spec = [[200, 0.10], [200, 0.10], [200, 0.002], [200, 0.09]];
+  const loud = decideVoicing(frs(spec)).map((x) => x.hz > 0);
+  const quiet = decideVoicing(frs(spec.map(([hz, rms]) => [hz, rms * 0.1]))).map((x) => x.hz > 0);
+  assert.deepEqual(quiet, loud);
+});
+t('全部が無音なら全部無声', () => {
+  assert.ok(decideVoicing(frs([[0, 0], [0, 0]])).every((x) => x.hz === 0));
+});
+
+console.log('\n[10] 音節への割り当て');
+// 声のかたまりを n 個作る（1つあたり 0.3秒、間に無声 gapFrames）
+const speech = (n, gapFrames = 8) => {
+  const out = []; let t = 0;
+  for (let k = 0; k < n; k++) {
+    for (let i = 0; i < 15; i++) { out.push({ t, hz: 200, rms: 0.08, clarity: .8 }); t += 0.02; }
+    for (let i = 0; i < gapFrames; i++) { out.push({ t, hz: 0, rms: 0.001, clarity: 0 }); t += 0.02; }
+  }
+  return out;
+};
+t('数が一致すればそのまま（exact）', () => {
+  const r = segment(speech(4), 4);
+  assert.equal(r.segs.length, 4);
+  assert.equal(r.exact, true);
+  assert.deepEqual(r.adjusted, { merged: 0, split: 0 });
+});
+t('多すぎれば間隔の狭い順に結合して音節数へ合わせる', () => {
+  const r = segment(speech(6), 4);
+  assert.equal(r.segs.length, 4);
+  assert.equal(r.exact, false);
+  assert.equal(r.adjusted.merged, 2);
+});
+t('ひと続きでも、音量の谷で割って音節数へ合わせる', () => {
+  const r = segment(speech(4, 1), 4); // 間がほぼ無く1つに繋がる
+  assert.equal(r.segs.length, 4);
+  assert.ok(r.adjusted.split >= 1);
+  r.segs.forEach((s) => assert.ok(s.pts.length >= 2, '空の区間ができている'));
+});
+t('区間は時間順に並び、重ならない', () => {
+  const r = segment(speech(5), 3);
+  for (let i = 1; i < r.segs.length; i++) {
+    assert.ok(r.segs[i].from >= r.segs[i - 1].to, '区間が前後している');
+  }
+});
+t('有声が無ければ empty', () => {
+  assert.equal(segment([{ t: 0, hz: 0, rms: 0 }], 2).empty, true);
+});
+
+console.log('\n[11] 音節展開');
 t('句読点はピンインを消費しない', () => {
   const s = syllables({ zh: '謝謝，麻煩你了。', pinyin: 'xie4 xie5 ma2 fan5 ni3 le5' });
   assert.equal(s.filter((x) => !x.punct).length, 6);

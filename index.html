@@ -2,60 +2,50 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>声調譜 TONESCORE — 台湾華語のリスニングと発音</title>
 <meta name="description" content="台湾華語の声調を譜面として掴む。規範カーブに自分の声のピッチを重ねる発音トレーナー。">
 <meta name="theme-color" content="#0F1216">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="manifest.json?v=5">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=5">
-<link rel="stylesheet" href="css/app.css?v=5">
+<link rel="manifest" href="manifest.json?v=6">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=6">
+<link rel="stylesheet" href="css/app.css?v=6">
 </head>
 <body>
 
-<header class="bar">
-  <div class="brand">
+<!-- ───────────────── 練習（1画面に収める） ───────────────── -->
+<main id="view-train" class="view view-train">
+
+  <div class="topline">
     <span class="brand-han" lang="zh-Hant-TW">聲調譜</span>
-    <span class="brand-lat">TONESCORE</span>
-    <span class="brand-ver" id="ver" title="動作中のバージョン">–</span>
+    <span class="brand-ver" id="ver">–</span>
+    <span class="topline-deck" id="deckLabel">現地で使う</span>
+    <span class="flag" id="verifyFlag" hidden>未確認</span>
+    <span class="idx" id="idx">1 / 10</span>
+    <button class="info-btn" id="infoBtn" aria-label="解説・凡例・診断">i</button>
   </div>
-  <div class="bar-right" id="deckLabel">現地で使う</div>
-</header>
 
-<!-- ───────────────── 練習（中心画面） ───────────────── -->
-<main id="view-train" class="view">
-
-  <section class="score" aria-label="声調譜">
-    <div class="score-head">
-      <span class="idx" id="idx">1 / 10</span>
-      <span class="flag" id="verifyFlag" hidden>現地確認したい表現</span>
-    </div>
-
+  <div class="phrase">
     <div class="hanzi" id="hanzi" lang="zh-Hant-TW"></div>
     <p class="ja" id="ja"></p>
+  </div>
 
-    <div class="lane-wrap">
-      <canvas id="lane" class="lane"></canvas>
-    </div>
+  <div class="lane-wrap">
+    <canvas id="lane" class="lane"></canvas>
+    <section class="sheet" id="sheet" hidden>
+      <div class="sheet-body" id="sheetBody"></div>
+      <button class="sheet-close" id="sheetClose">閉じる</button>
+    </section>
+  </div>
 
-    <div class="verdicts" id="verdicts"></div>
+  <div class="verdicts" id="verdicts"></div>
+  <p class="vd-detail" id="vdDetail">押している間だけ録音します。1フレーズを一息で。</p>
 
-    <p class="legend">
-      <span class="key key-model"></span>規範カーブ（五度式の理論値・実音声の実測ではない）
-      <span class="key key-voice"></span>あなたの声（実測F0／自分の中央ピッチ基準の半音）
-    </p>
-    <p class="note" id="note"></p>
-  </section>
-
-  <section class="pad">
+  <div class="pad">
     <div class="row-listen">
-      <button class="btn btn-ghost" id="btnMelody">
-        <span class="btn-t">旋律で掴む</span><span class="btn-s">声調をハミングで</span>
-      </button>
-      <button class="btn btn-ghost" id="btnSpeak">
-        <span class="btn-t">中文を聞く</span><span class="btn-s">台湾華語の音声</span>
-      </button>
+      <button class="btn" id="btnMelody"><span class="btn-t">旋律で掴む</span></button>
+      <button class="btn" id="btnSpeak"><span class="btn-t">中文を聞く</span></button>
     </div>
 
     <button class="prep" id="micPrep" hidden>
@@ -70,19 +60,16 @@
     </button>
 
     <div class="row-after">
-      <button class="btn btn-ghost btn-sm" id="btnPlayMine" disabled>自分の声を聞く</button>
-      <button class="btn btn-ghost btn-sm" id="btnAB" disabled>交互に聞く</button>
+      <button class="btn btn-sm" id="prev" aria-label="前のフレーズ">←</button>
+      <button class="btn btn-sm" id="btnPlayMine" disabled>自分の声</button>
+      <button class="btn btn-sm" id="btnAB" disabled>交互に</button>
+      <button class="btn btn-sm" id="next" aria-label="次のフレーズ">→</button>
     </div>
-
-    <nav class="stepper">
-      <button id="prev" class="step">← 前</button>
-      <button id="next" class="step">次 →</button>
-    </nav>
-  </section>
+  </div>
 </main>
 
 <!-- ───────────────── 耳だけモード ───────────────── -->
-<main id="view-ear" class="view" hidden>
+<main id="view-ear" class="view view-scroll" hidden>
   <section class="ear">
     <h2 class="h2">耳だけモード</h2>
     <p class="lead">画面を見ずに聞き流す。歩きながら、口だけ動かす用。</p>
@@ -122,7 +109,7 @@
 </main>
 
 <!-- ───────────────── フレーズ集 ───────────────── -->
-<main id="view-list" class="view" hidden>
+<main id="view-list" class="view view-scroll" hidden>
   <section class="list" id="deckList"></section>
 </main>
 
@@ -132,6 +119,6 @@
   <button data-view="list" class="tab"><span>集</span>フレーズ</button>
 </nav>
 
-<script type="module" src="js/app.js?v=5"></script>
+<script type="module" src="js/app.js?v=6"></script>
 </body>
 </html>

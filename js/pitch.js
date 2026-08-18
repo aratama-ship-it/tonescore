@@ -4,11 +4,13 @@
 
 const MIN_HZ = 70;
 const MAX_HZ = 420;
-// ★しきい値は iPhone 実機の実測で決めた値（2026-08-18）。
-//   初期値（CLARITY 0.62 / RMS_GATE 0.012）では実機で有声率が3%しか出ず、
-//   声のほとんどを無声として捨てていた。机上の値に戻さないこと。
-const CLARITY = 0.45;   // 相関のしきい値。これ未満は無声とみなす
-const RMS_GATE = 0.005; // 無音ゲート
+// ★しきい値は iPhone 実機の実測で決めた値。机上の値に戻さないこと。
+//   2026-08-18 1回目: CLARITY 0.62 / RMS_GATE 0.012 → 有声率3%（ほぼ全部捨てていた）
+//   2026-08-18 2回目: CLARITY 0.45 / RMS_GATE 0.005 → 有声率28〜42%（まだ半分近く落ちる）
+//   → 音量の絶対値で切るのをやめ、**その収録の最大音量に対する相対値**で有声を決める
+//     （decideVoicing）。マイクの入力レベルは端末・距離・声量で桁が変わるため。
+const CLARITY = 0.38;    // 相関のしきい値。これ未満は周期性なしとみなす
+const RMS_FLOOR = 0.0015; // 完全な無音。これ未満は計算もしない
 const SAMPLE_MS = 16;   // 取り込み間隔（約62回/秒）
 
 export class PitchRecorder {
@@ -77,9 +79,9 @@ export class PitchRecorder {
     const tick = () => {
       if (!this.running) return;
       this.analyser.getFloatTimeDomainData(this.buf);
-      const { hz, rms } = detect(this.buf, this.ctx.sampleRate);
+      const { hz, rms, clarity } = detect(this.buf, this.ctx.sampleRate);
       const now = performance.now();
-      this.frames.push({ t: (now - this.t0) / 1000, hz, rms });
+      this.frames.push({ t: (now - this.t0) / 1000, hz, rms, clarity });
       if (onFrame && now - lastReport > 100) {
         lastReport = now;
         const v = this.frames.filter((f) => f.hz > 0).length;
@@ -131,7 +133,7 @@ export function detect(buf, sampleRate) {
   let rms = 0;
   for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / buf.length);
-  if (rms < RMS_GATE) return { hz: 0, rms };
+  if (rms < RMS_FLOOR) return { hz: 0, rms, clarity: 0 };
 
   const D = Math.max(1, Math.round(sampleRate / TARGET_SR));
   const sr = sampleRate / D;
@@ -146,7 +148,7 @@ export function detect(buf, sampleRate) {
 
   const minLag = Math.floor(sr / MAX_HZ);
   const maxLag = Math.min(Math.floor(sr / MIN_HZ), n - 8);
-  if (maxLag <= minLag + 2) return { hz: 0, rms };
+  if (maxLag <= minLag + 2) return { hz: 0, rms, clarity: 0 };
 
   const corr = new Float32Array(maxLag + 2);
   let bestCorr = 0;
@@ -160,7 +162,7 @@ export function detect(buf, sampleRate) {
     corr[lag] = c;
     if (c > bestCorr) bestCorr = c;
   }
-  if (bestCorr < CLARITY) return { hz: 0, rms };
+  if (bestCorr < CLARITY) return { hz: 0, rms, clarity: bestCorr };
 
   // ★最大値ではなく「最初の十分に高い山」を採る。
   //   ラグが大きいほど重なる区間が短くなり正規化相関が持ち上がるため、
@@ -180,7 +182,19 @@ export function detect(buf, sampleRate) {
   const y0 = corr[bestLag - 1] || bestCorr, y1 = bestCorr, y2 = corr[bestLag + 1] || bestCorr;
   const denom = 2 * (2 * y1 - y0 - y2);
   const shift = denom !== 0 ? (y2 - y0) / denom : 0;
-  return { hz: sr / (bestLag + shift), rms };
+  return { hz: sr / (bestLag + shift), rms, clarity: bestCorr };
+}
+
+/**
+ * 有声/無声の判定を、収録全体を見てから決める。
+ * マイクの入力レベルは端末・口との距離・声量で桁が変わるので、絶対値では切れない。
+ * 「その収録で一番大きかった音の何%か」で判断する。
+ */
+export function decideVoicing(frames) {
+  const maxRms = frames.reduce((m, f) => Math.max(m, f.rms), 0);
+  if (!maxRms) return frames.map((f) => ({ ...f, hz: 0 }));
+  const gate = Math.max(maxRms * 0.09, RMS_FLOOR * 2); // 最大音量の9%（約-21dB）
+  return frames.map((f) => ({ ...f, hz: f.rms >= gate ? f.hz : 0 }));
 }
 
 /**
@@ -212,39 +226,69 @@ export function medianHz(frames) {
 }
 
 /**
- * 有声区間を音節候補へ分割する。
- * 期待音節数と一致しない場合は均等割にフォールバックし、その旨を返す（黙って推測しない）。
+ * 有声区間を音節へ割り当てる。
+ *
+ * ★以前は「検出数が音節数と一致しなければ全体を均等割」にしていたが、
+ *   実機では声が途切れて数が合わないのが普通で、ほぼ常に均等割になり、
+ *   カーブが実際とは違う列に描かれていた（2026-08-18の実機で確認）。
+ *   いまは実際の声のかたまりを起点に、**足りなければ長い塊を割り、多ければ近い塊を結合**して
+ *   音節数へ合わせる。何をしたかは adjusted で返す（黙って推測しない）。
  */
 export function segment(frames, expected) {
-  const voiced = [];
+  const GAP = 0.09; // これ以上の無声で区切る
+  const runs = [];
   let cur = null;
-  const GAP = 0.055; // これ以上の無声で区切る
   for (const f of frames) {
     if (f.hz > 0) {
       if (!cur) cur = { from: f.t, to: f.t, pts: [] };
       cur.to = f.t;
       cur.pts.push(f);
     } else if (cur && f.t - cur.to > GAP) {
-      voiced.push(cur); cur = null;
+      runs.push(cur); cur = null;
     }
   }
-  if (cur) voiced.push(cur);
+  if (cur) runs.push(cur);
 
-  const segs = voiced.filter((s) => s.to - s.from > 0.045);
+  let segs = runs.filter((s) => s.to - s.from >= 0.035 && s.pts.length >= 3);
   if (!segs.length) return { segs: [], exact: false, empty: true };
-  if (segs.length === expected) return { segs, exact: true };
 
-  // 均等割フォールバック：全有声区間を音節数で等分する
-  const from = segs[0].from, to = segs[segs.length - 1].to;
-  const all = frames.filter((f) => f.hz > 0 && f.t >= from && f.t <= to);
-  const step = (to - from) / expected;
-  const out = [];
-  for (let i = 0; i < expected; i++) {
-    const a = from + step * i, b = a + step;
-    const pts = all.filter((f) => f.t >= a && f.t <= (i === expected - 1 ? to + 1 : b));
-    out.push({ from: a, to: b, pts });
+  const detected = segs.length;
+  let merged = 0, split = 0;
+
+  // 多すぎる：間隔が最も狭い隣同士から結合していく
+  while (segs.length > expected) {
+    let at = 0, best = Infinity;
+    for (let i = 0; i < segs.length - 1; i++) {
+      const gap = segs[i + 1].from - segs[i].to;
+      if (gap < best) { best = gap; at = i; }
+    }
+    segs.splice(at, 2, {
+      from: segs[at].from,
+      to: segs[at + 1].to,
+      pts: segs[at].pts.concat(segs[at + 1].pts),
+    });
+    merged++;
   }
-  return { segs: out, exact: false };
+
+  // 足りない：最も長い塊を、その中で一番音量が小さい所で割る
+  while (segs.length < expected) {
+    let at = 0, longest = -1;
+    segs.forEach((s, i) => { if (s.to - s.from > longest) { longest = s.to - s.from; at = i; } });
+    const s0 = segs[at];
+    if (s0.pts.length < 6) break; // これ以上割れない
+    const lo = Math.floor(s0.pts.length * 0.25), hi = Math.ceil(s0.pts.length * 0.75);
+    let cutAt = Math.floor(s0.pts.length / 2), minRms = Infinity;
+    for (let i = lo; i < hi; i++) {
+      if (s0.pts[i].rms < minRms) { minRms = s0.pts[i].rms; cutAt = i; }
+    }
+    const a = s0.pts.slice(0, cutAt), b = s0.pts.slice(cutAt);
+    segs.splice(at, 1,
+      { from: a[0].t, to: a[a.length - 1].t, pts: a },
+      { from: b[0].t, to: b[b.length - 1].t, pts: b });
+    split++;
+  }
+
+  return { segs, exact: detected === expected, detected, adjusted: { merged, split } };
 }
 
 /** 区間を「0..1 の時間 × 半音（基準Hz比）」へ正規化 */

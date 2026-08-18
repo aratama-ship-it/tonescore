@@ -2,13 +2,13 @@
 import { DECKS, syllables, isPunct } from './data/phrases.js';
 import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js';
 import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack } from './pitch.js';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing } from './pitch.js';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v5';
+const APP_VERSION = 'v6';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -106,11 +106,17 @@ function renderText() {
 
   const host = $('#hanzi');
   host.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
-  host.innerHTML = state.syls.map((s) => `
+  host.innerHTML = state.syls.map((s) => {
+    const py = withTone(s.py, s.realized);
+    return `
     <span class="syl${s.sandhi ? ' sandhi' : ''}">
-      <span class="han">${s.char}${s.tail ? `<span style="opacity:.4">${s.tail}</span>` : ''}</span>
-      <span class="bpm">${toBopomofo(withTone(s.py, s.realized))}</span>
-    </span>`).join('');
+      <span class="glyph">
+        <span class="han">${s.char}${s.tail ? `<span style="opacity:.4">${s.tail}</span>` : ''}</span>
+        <span class="bpm">${toBopomofo(py)}</span>
+      </span>
+      <span class="py">${toPinyinMarked(py)}</span>
+    </span>`;
+  }).join('');
 
   fitHanzi();
   $('#ja').textContent = item.ja;
@@ -129,19 +135,29 @@ function renderText() {
   if (item.verify === 'check') {
     notes.push('<b>この表現は未確認</b>：意味は通るが、台湾の現場で自然かは要確認。');
   }
-  $('#note').innerHTML = notes.join('<br>');
+  state.notes = notes;          // 常時表示せず「i」のシートで見せる（1画面に収めるため）
+  if (!$('#sheet').hidden) renderSheet();
 }
 
 const withTone = (py, tone) => py.replace(/[1-5]$/, String(tone));
 
-/** 漢字＋注音が1行に収まるサイズへ。句読点をぶら下げた列は1.35字分として見積もる */
+/**
+ * 漢字＋注音＋ピンインが1行に収まるサイズへ。
+ * 見積もりで置いたあと、実際に溢れていれば収まるまで縮める（ピンインは字より広いことがある）。
+ */
 function fitHanzi() {
   const host = $('#hanzi');
   const w = host.clientWidth;
   if (!w) return;
   const units = state.syls.reduce((s, x) => s + (x.tail ? 1.35 : 1) + 0.34, 0); // 0.34 = 注音の幅
-  const size = Math.max(16, Math.min(38, (w / units) * 0.98));
-  host.querySelectorAll('.syl').forEach((el) => { el.style.fontSize = `${size}px`; });
+  let size = Math.max(14, Math.min(34, (w / units) * 0.98));
+  const els = host.querySelectorAll('.syl');
+  const apply = () => els.forEach((el) => { el.style.fontSize = `${size}px`; });
+  apply();
+  let guard = 24;
+  while (host.scrollWidth > host.clientWidth + 1 && size > 13 && guard--) {
+    size -= 1; apply();
+  }
 }
 
 /* ── 描画：レーン ───────────────────────────────── */
@@ -245,10 +261,11 @@ const getCSS = (v) => getComputedStyle(document.documentElement).getPropertyValu
 /* ── 判定の表示 ─────────────────────────────────── */
 function renderVerdicts() {
   const host = $('#verdicts');
+  const detail = $('#vdDetail');
   host.style.gridTemplateColumns = `repeat(${Math.max(1, state.syls.length)}, 1fr)`;
   if (!state.user) {
-    host.innerHTML = `<p class="vd-txt" style="grid-column:1/-1;text-align:center;padding-top:12px">
-      押している間だけ録音します。1フレーズを一息で。</p>`;
+    host.innerHTML = '';
+    detail.innerHTML = '押している間だけ録音します。1フレーズを一息で。';
     return;
   }
   host.innerHTML = state.user.map((u) => `
@@ -258,35 +275,51 @@ function renderVerdicts() {
     </div>`).join('');
 
   const worst = state.user.find((u) => !u.verdict.ok);
+  detail.innerHTML = worst
+    ? `<b>${worst.syl.char}（${TONE_NAMES[worst.syl.realized]}）</b> ${worst.verdict.label} — ${worst.verdict.detail}`
+    : '<b>全音節が規範の形と一致しました。</b>速度を上げて崩れないか確かめる。';
+  if (!$('#sheet').hidden) renderSheet();
+}
+
+/** 「i」で開くシート：凡例・解説・診断。1画面に収めるため常時表示しない */
+function renderSheet() {
   const lines = [];
-  if (worst) {
-    lines.push(`<b>${worst.syl.char}（${TONE_NAMES[worst.syl.realized]}）</b> ${worst.verdict.label} — ${worst.verdict.detail}`);
-  } else {
-    lines.push('<b>全音節が規範の形と一致しました。</b>速度を上げて崩れないか確かめる。');
-  }
+  lines.push(`<span class="k" style="background:var(--model)"></span>規範カーブ（五度式の理論値・実音声の実測ではない）<br>`
+    + `<span class="k" style="background:var(--voice)"></span>あなたの声（実測F0／自分の中央ピッチ基準の半音）`);
+  if (state.notes?.length) lines.push('<hr>' + state.notes.join('<br>'));
+
   const d = state.diag;
   if (d) {
     const pct = Math.round((d.voiced / d.frames) * 100);
-    lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz ／ 有声 ${pct}%`
-      + ` ／ ${d.frames}フレーム・${Math.round(d.fps)}回/秒`
-      + (d.prepMs ? ` ／ 準備 ${d.prepMs}ms` : ''));
+    const seg = state.seginfo;
+    const segTxt = state.fallback && seg
+      ? `声のかたまりを ${seg.detected} 個検出し、`
+        + `${seg.adjusted.merged ? `${seg.adjusted.merged}回結合` : ''}`
+        + `${seg.adjusted.merged && seg.adjusted.split ? '・' : ''}`
+        + `${seg.adjusted.split ? `${seg.adjusted.split}回分割` : ''}`
+        + `して${state.syls.length}音節に合わせた。1音ずつ区切って言うと検出が合いやすい。`
+      : '声のかたまりが音節数とぴったり一致した。';
+    lines.push('<hr><b>この収録の測定値</b><br>'
+      + `基準ピッチ ${Math.round(state.refHz)} Hz ／ 有声 ${pct}%<br>`
+      + `${d.frames}フレーム・${Math.round(d.fps)}回/秒`
+      + (d.prepMs ? ` ／ マイク準備 ${d.prepMs}ms` : '') + '<br>'
+      + segTxt);
     if (pct < 25) {
-      lines.push('<b>声を拾えている割合が低い</b>。口をマイク（画面下端）に近づけ、'
+      lines.push('<b>声を拾えている割合が低い。</b>口をマイク（画面下端）に近づけ、'
         + '母音を伸ばし気味に、少し大きめの声で言うと安定する。');
     }
-  } else {
-    lines.push(`基準ピッチ ${Math.round(state.refHz)} Hz（この収録の中央値）`);
   }
-  if (state.fallback) lines.push('音節の区切りを自動検出できず、有声区間を均等割にして表示しています。1音ずつ区切って言うと精度が上がります。');
-  // ★古い診断を先に消してから差し込む。
-  //   以前は挿入後に「最後の1つを残す」処理をしていたため、host.after() で先頭に入る新しい方が
-  //   消えて初回の表示が残り続けていた（実機で3回連続同じ数値が出た原因）。
-  document.querySelectorAll('.vd-detail').forEach((el) => el.remove());
-  const box = document.createElement('p');
-  box.className = 'vd-detail';
-  box.innerHTML = lines.join('<br>');
-  host.after(box);
+  $('#sheetBody').innerHTML = lines.join('<br>');
 }
+
+$('#infoBtn').addEventListener('click', () => {
+  const sheet = $('#sheet');
+  if (sheet.hidden) { renderSheet(); sheet.hidden = false; $('#infoBtn').classList.add('on'); }
+  else { sheet.hidden = true; $('#infoBtn').classList.remove('on'); }
+});
+$('#sheetClose').addEventListener('click', () => {
+  $('#sheet').hidden = true; $('#infoBtn').classList.remove('on');
+});
 
 /* ── 収録と解析 ─────────────────────────────────── */
 const mic = $('#mic');
@@ -340,7 +373,8 @@ function stopRec() {
 }
 
 function analyze(rawFrames) {
-  const frames = smoothTrack(rawFrames); // 単発の飛び・穴を整える
+  // 有声判定は収録全体の音量を見てから決め、そのあとで単発の飛び・穴を整える
+  const frames = smoothTrack(decideVoicing(rawFrames));
 
   // ★測れていないのに判定を出さない。
   //   取り込みが間引かれると数フレームしか無いのに「0/8 音節が一致」と断定してしまう。
@@ -372,12 +406,13 @@ function analyze(rawFrames) {
     prepMs: rec.timing?.first ? rec.timing.totalMs : 0,
   };
   const n = state.syls.length;
-  const { segs, exact, empty } = segment(frames, n);
+  const { segs, exact, empty, detected, adjusted } = segment(frames, n);
   if (empty) {
     $('#micState').textContent = '声が取れませんでした。口を画面下端に近づけて、もう一度';
     return;
   }
   state.fallback = !exact;
+  state.seginfo = { detected, adjusted };
   state.user = state.syls.map((s, i) => {
     const curve = normalize(segs[i], ref);
     return { syl: s, curve, verdict: judge(s.realized, curve) };
@@ -479,7 +514,6 @@ $('#next').addEventListener('click', () => go(1));
 function refresh() {
   build();
   renderText();
-  document.querySelectorAll('.vd-detail').forEach((el) => el.remove());
   renderVerdicts();
   $('#micState').textContent = 'マイクを使います';
   $('#btnPlayMine').disabled = true;
