@@ -24,6 +24,8 @@ export class PitchRecorder {
     this.recorder = null;
     this.timer = null;
     this.recOffset = 0; // 解析の t=0 と、録音音声の 0秒 とのズレ（秒）
+    this.granted = false; // 一度でもマイクの許可が取れたか
+    this.lastBlob = null;
     this.chunks = [];
     this.lastBlobUrl = null;
   }
@@ -35,7 +37,7 @@ export class PitchRecorder {
    */
   async ensure() {
     const t0 = performance.now();
-    const first = !this.stream;
+    const first = !this.granted;
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AC();
@@ -60,12 +62,27 @@ export class PitchRecorder {
       src.connect(this.analyser);
     }
     if (this.ctx.state === 'suspended') { try { await this.ctx.resume(); } catch { /* 無視 */ } }
+    this.granted = true;
     this.timing = { first, permMs: Math.round(permMs), totalMs: Math.round(performance.now() - t0) };
     return this.ctx;
   }
 
-  /** 用意ができているか（毎回の押下で待たされないための判定） */
-  get ready() { return !!this.stream && !!this.analyser; }
+  /** 許可が取れているか（準備ボタンを出すかの判定。手放していてもtrue） */
+  get ready() { return this.granted; }
+
+  /**
+   * マイクを手放す。
+   * ★iOSは**マイクを掴んでいる間、音の出口を受話口（耳に当てる小さいスピーカー）に切り替える**。
+   *   録音した声を聞き返すときに音量を最大にしても小さくしか鳴らないのはこれが原因。
+   *   再生の前に必ず手放す。次に録音するときは ensure() が取り直す（許可は残る）。
+   */
+  release() {
+    if (this.stream) {
+      this.stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* 無視 */ } });
+      this.stream = null;
+      this.analyser = null;
+    }
+  }
 
   /** @param onFrame 収録中の状態を返すコールバック（UIの手応え用。約100msごと） */
   start(onFrame) {
@@ -117,7 +134,8 @@ export class PitchRecorder {
     if (this.recorder && this.recorder.state !== 'inactive') {
       this.recorder.onstop = () => {
         if (this.lastBlobUrl) URL.revokeObjectURL(this.lastBlobUrl);
-        this.lastBlobUrl = URL.createObjectURL(new Blob(this.chunks, { type: this.chunks[0]?.type || 'audio/mp4' }));
+        this.lastBlob = new Blob(this.chunks, { type: this.chunks[0]?.type || 'audio/mp4' });
+        this.lastBlobUrl = URL.createObjectURL(this.lastBlob);
       };
       this.recorder.stop();
     }

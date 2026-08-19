@@ -1,14 +1,14 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js?v=8';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=8';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=8';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=8';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=9';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=9';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=9';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=9';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v8';
+const APP_VERSION = 'v9';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -315,6 +315,11 @@ function renderSheet() {
       lines.push('<b>声を拾えている割合が低い。</b>口をマイク（画面下端）に近づけ、'
         + '母音を伸ばし気味に、少し大きめの声で言うと安定する。');
     }
+    if (state.audioBuf) {
+      lines.push(`<hr><b>再生</b><br>録音のピーク ${state.audioPeak.toFixed(3)} → `
+        + `${state.audioGain.toFixed(1)}倍に持ち上げて再生（長さ ${state.audioBuf.duration.toFixed(2)}秒）<br>`
+        + '再生の前にマイクを手放している（iOSは掴んだままだと受話口から鳴るため）。');
+    }
     if (state.user) {
       lines.push('<hr><b>音節ごとの割り当て</b>（タップでその部分だけ聴き直せる）<br>'
         + state.user.map((u) => (u.seg
@@ -411,6 +416,8 @@ function analyze(rawFrames) {
     return;
   }
   state.refHz = ref;
+  state.audioBuf = null;     // 前の収録の復号結果を捨てる
+  state.needFreshCtx = true; // 次の再生の前に音声セッションを作り直す
   // 実機で問題が出たときに原因を切り分けるための素の数値
   state.diag = {
     frames: frames.length,
@@ -496,60 +503,91 @@ $('#btnSpeak').addEventListener('click', async () => {
   b.classList.remove('playing');
 });
 
-let mineAudio = null;
-function playMine() {
-  if (!rec.lastBlobUrl) return Promise.resolve();
-  stopMine();
-  mineAudio = new Audio(rec.lastBlobUrl);
-  return new Promise((r) => { mineAudio.onended = r; mineAudio.onerror = r; mineAudio.play().catch(r); });
-}
-function stopMine() {
-  if (mineAudio) { try { mineAudio.pause(); } catch { /* 無視 */ } mineAudio = null; }
-  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
-}
-
-/* ── 音節ごとの聴き直し ─────────────────────────────
-   「その文字がちゃんと録れているか」を耳で確かめられるようにする。
-   解析の時刻（t=0＝押した瞬間）と録音音声の0秒はズレるので rec.recOffset で補正する。 */
+/* ── 自分の声の再生 ───────────────────────────────
+   ★<audio> ではなく Web Audio で鳴らす。理由は3つ。
+     ①iOSはマイクを掴んでいる間、音の出口を受話口へ切り替える。再生前に必ず手放す。
+     ②録音レベルは端末・距離で桁が変わるので、ピークを見て**持ち上げてから**鳴らす。
+     ③MediaRecorder の出力は長さ情報を持たないことがあり <audio> のシークが効かない。
+       復号して AudioBuffer にすれば、任意の区間を確実に鳴らせる。 */
+let playSrc = null;
 let playTimer = null;
 state.playing = -1;
 
-function playSyllable(i) {
+function stopMine() {
+  if (playSrc) { try { playSrc.stop(); } catch { /* 無視 */ } playSrc = null; }
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+}
+
+async function ensureBuffer() {
+  if (state.audioBuf) return state.audioBuf;
+  if (!rec.lastBlob) return null;
+  try {
+    const ctx = getCtx();
+    const buf = await ctx.decodeAudioData(await rec.lastBlob.arrayBuffer());
+    let peak = 0;
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i += 8) peak = Math.max(peak, Math.abs(d[i]));
+    state.audioBuf = buf;
+    state.audioPeak = peak;
+    state.audioGain = Math.min(16, 0.92 / Math.max(0.02, peak)); // 小さい録音を持ち上げる
+    return buf;
+  } catch {
+    state.audioBuf = null;
+    return null;
+  }
+}
+
+/** 録音の一部（または全体）を鳴らす。offset/dur は解析の時間軸（秒） */
+async function playRecorded(offset, dur) {
+  stopMine();
+  rec.release(); // ★これを先にやらないと iOS は受話口から鳴らす
+  // マイクを手放しても、録音中に作った AudioContext は録音モードの音声セッションを
+  // 引きずることがある。収録のあと最初の再生では作り直す（生成は数ミリ秒）。
+  if (state.needFreshCtx) {
+    state.needFreshCtx = false;
+    state.audioBuf = null;
+    if (audioCtx) { try { await audioCtx.close(); } catch { /* 無視 */ } audioCtx = null; }
+  }
+  const buf = await ensureBuffer();
+  if (!buf) return false;
+  const ctx = getCtx();
+  if (ctx.state === 'suspended') { try { await ctx.resume(); } catch { /* 無視 */ } }
+
+  const from = Math.max(0, offset - rec.recOffset);
+  // 録音がその区間まで届いていない場合は、短い切れ端を鳴らさず失敗として返す
+  if (buf.duration - from < 0.08) return false;
+  const len = Math.min(dur, buf.duration - from);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const g = ctx.createGain();
+  g.gain.value = state.audioGain;
+  src.connect(g).connect(ctx.destination);
+  src.start(0, from, len);
+  playSrc = src;
+  playTimer = setTimeout(() => { state.playing = -1; drawLane(); }, len * 1000 + 60);
+  return new Promise((r) => { src.onended = () => r(true); setTimeout(() => r(true), len * 1000 + 120); });
+}
+
+function playMine() {
+  if (!rec.lastBlob) return Promise.resolve();
+  return playRecorded(rec.recOffset, 1e3);
+}
+
+/* ── 音節ごとの聴き直し ─────────────────────────────
+   「その文字がちゃんと録れているか」を耳で確かめられるようにする。 */
+async function playSyllable(i) {
   const u = state.user?.[i];
   if (!u) return;
-  stopMine();
   state.playing = i;
   drawLane();
 
-  const seg = u.seg;
-  if (!seg || !rec.lastBlobUrl) {
-    // 録音が無い場合は、その音節の規範の旋律を鳴らす（無反応にしない）
+  const pad = 0.06;
+  const ok = u.seg && rec.lastBlob ? await playRecorded(u.seg.from - pad, (u.seg.to - u.seg.from) + pad * 2) : false;
+  if (!ok) {
+    // 録音が使えない場合は、その音節の規範の旋律を鳴らす（無反応にしない）
     playToneMelody(getCtx(), [u.syl.realized], state.refHz || 165, 0.6);
     playTimer = setTimeout(() => { state.playing = -1; drawLane(); }, 700);
-    return;
   }
-  const pad = 0.06;
-  const from = Math.max(0, seg.from - rec.recOffset - pad);
-  const dur = (seg.to - seg.from) + pad * 2;
-  const a = new Audio(rec.lastBlobUrl);
-  mineAudio = a;
-
-  const begin = () => {
-    try { a.currentTime = from; } catch { /* 後で検知する */ }
-    a.play().then(() => {
-      // MediaRecorder が作った音声は長さ情報を持たないことがあり、その場合シークが効かない。
-      // 効いていなければ黙って頭から流さず、そう伝える。
-      if (from > 0.15 && a.currentTime < from - 0.15) {
-        $('#micState').textContent = 'この端末では音節ごとの頭出しができません（全体を再生します）';
-      }
-      playTimer = setTimeout(() => {
-        try { a.pause(); } catch { /* 無視 */ }
-        state.playing = -1; drawLane();
-      }, dur * 1000);
-    }).catch(() => { state.playing = -1; drawLane(); });
-  };
-  if (a.readyState >= 1) begin();
-  else a.addEventListener('loadedmetadata', begin, { once: true });
 }
 
 /** レーンの列をタップ → その音節だけ聴き直す */
