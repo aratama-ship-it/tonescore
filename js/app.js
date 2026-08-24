@@ -1,14 +1,14 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js?v=12';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=12';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=12';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=12';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=13';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=13';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=13';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=13';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v12';
+const APP_VERSION = 'v13';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -142,8 +142,6 @@ function renderText() {
 
 const withTone = (py, tone) => py.replace(/[1-5]$/, String(tone));
 
-const TONE_SHORT = { 1: '一声', 2: '二声', 3: '三声', 4: '四声', 5: '軽声' };
-
 /**
  * 声調の帯：グラフの各列の真上に、その声調の輪郭を大きく並べる。
  * ★記号（ˉˊˇˋ）ではなく**形そのもの**を置く。このアプリの言語は「形」なので、
@@ -165,9 +163,10 @@ function renderToneBar() {
       const y = padY + ((6 - st) / 12) * (H - padY * 2);
       return `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
     }).join(' ');
+    const label = toPinyinMarked(withTone(s.py, s.realized));
     return `<div class="tone-cell${s.sandhi ? ' sandhi' : ''}">
       <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><path d="${d}"/></svg>
-      <span class="tone-l">${TONE_SHORT[s.realized]}${s.sandhi ? '←三' : ''}</span>
+      <span class="tone-l">${label}</span>
     </div>`;
   }).join('');
 }
