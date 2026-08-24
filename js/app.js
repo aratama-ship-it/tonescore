@@ -1,14 +1,14 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js?v=10';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=10';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=10';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=10';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=11';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=11';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=11';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=11';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v10';
+const APP_VERSION = 'v11';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -204,34 +204,106 @@ function sizeCanvas() {
   drawLane();
 }
 
-function drawLane() {
-  const w = cv.width / (Math.min(window.devicePixelRatio || 1, 3));
-  const h = cv.height / (Math.min(window.devicePixelRatio || 1, 3));
-  const n = Math.max(1, state.syls.length);
-  const padY = 16;
-  const y = (st) => padY + ((ST_MAX - st) / (ST_MAX * 2)) * (h - padY * 2);
-  const colW = w / n;
+const dpr = () => Math.min(window.devicePixelRatio || 1, 3);
+const laneW = () => cv.width / dpr();
+const laneH = () => cv.height / dpr();
+const laneY = (st, h) => 16 + ((ST_MAX - st) / (ST_MAX * 2)) * (h - 32);
 
-  cx.clearRect(0, 0, w, h);
-
-  // 五度式の水平グリッド（level 1,2,3,4,5 → -6,-3,0,+3,+6 半音）
+/** 五度式のグリッドと高中低の目安。実況ビューでも同じ物差しを使う */
+function drawGrid(w, h) {
   for (const st of [-6, -3, 0, 3, 6]) {
     cx.beginPath();
-    cx.moveTo(0, y(st)); cx.lineTo(w, y(st));
+    cx.moveTo(0, laneY(st, h)); cx.lineTo(w, laneY(st, h));
     cx.strokeStyle = st === 0 ? 'rgba(236,230,220,.19)' : 'rgba(236,230,220,.075)';
     cx.lineWidth = 1;
     cx.setLineDash(st === 0 ? [] : [2, 4]);
     cx.stroke();
   }
   cx.setLineDash([]);
-
-  // 五度式の目安（グリッド線に厳密に合わせる）
   cx.font = '400 9px -apple-system, system-ui, sans-serif';
   cx.textAlign = 'right';
   cx.fillStyle = 'rgba(236,230,220,.26)';
   [[6, '高'], [0, '中'], [-6, '低']].forEach(([st, label]) => {
-    cx.fillText(label, w - 7, y(st) + 3);
+    cx.fillText(label, w - 7, laneY(st, h) + 3);
   });
+}
+
+/**
+ * 録音中の実況ビュー。
+ * ★押している指の近くに小さく出しても見えない（2026-08-19の実機報告）。
+ *   指から最も遠く、いま空いている**レーンそのもの**を実況に使う。
+ *   ここでは音節ごとに並べ直さず、実時間のまま1本の線で描く（並べ直すのは離した後）。
+ */
+function drawLive() {
+  const w = laneW(), h = laneH();
+  cx.clearRect(0, 0, w, h);
+  drawGrid(w, h);
+
+  const frames = rec.frames || [];
+  const voiced = frames.filter((f) => f.hz > 0);
+  const elapsed = frames.length ? frames[frames.length - 1].t : 0;
+  const span = Math.max(1.6, elapsed);
+  const hzList = voiced.map((f) => f.hz).sort((a, b) => a - b);
+  const ref = hzList.length ? hzList[Math.floor(hzList.length / 2)] : 0;
+
+  if (ref) {
+    cx.beginPath();
+    let started = false;
+    for (const f of frames) {
+      if (!f.hz) { started = false; continue; }
+      const x = (f.t / span) * w;
+      const st = Math.max(-ST_MAX, Math.min(ST_MAX, 12 * Math.log2(f.hz / ref)));
+      const yy = laneY(st, h);
+      started ? cx.lineTo(x, yy) : cx.moveTo(x, yy);
+      started = true;
+    }
+    cx.strokeStyle = getCSS('--voice');
+    cx.lineWidth = 2.4; cx.lineJoin = 'round'; cx.lineCap = 'round';
+    cx.stroke();
+  }
+
+  // 大きく出す実況の数字。線に重なるので帯を敷く
+  // ★状態は「直近」で見る。最後の1フレームで判断すると、音節の切れ目ごとに
+  //   「声を拾えていません」が点滅して読めない。
+  const now = elapsed;
+  const recent = frames.filter((f) => f.t > now - 0.25 && f.hz > 0);
+  const silent = !frames.some((f) => f.t > now - 0.6 && f.hz > 0);
+  const ratio = frames.length ? voiced.length / frames.length : 0;
+
+  cx.fillStyle = 'rgba(15,18,22,.74)';
+  cx.fillRect(0, 0, w, 54);
+  cx.textAlign = 'center';
+  if (!silent && recent.length) {
+    const hzNow = recent[recent.length - 1].hz;
+    cx.fillStyle = getCSS('--paper');
+    cx.font = '600 28px -apple-system, system-ui, sans-serif';
+    cx.fillText(`${Math.round(hzNow)} Hz`, w / 2, 30);
+    cx.fillStyle = getCSS('--voice');
+    cx.font = '500 13px -apple-system, system-ui, sans-serif';
+    cx.fillText(`声を拾えています ${Math.round(ratio * 100)}%`, w / 2, 47);
+  } else {
+    cx.fillStyle = getCSS('--model');
+    cx.font = '600 19px -apple-system, system-ui, sans-serif';
+    cx.fillText('声を拾えていません', w / 2, 27);
+    cx.fillStyle = 'rgba(236,230,220,.5)';
+    cx.font = '400 11.5px -apple-system, system-ui, sans-serif';
+    cx.fillText('口を画面の下端に近づけて、声を出す', w / 2, 45);
+  }
+  cx.fillStyle = 'rgba(236,230,220,.3)';
+  cx.font = '400 9.5px -apple-system, system-ui, sans-serif';
+  cx.fillText(`録音中（実時間 ${elapsed.toFixed(1)}秒）`, w / 2, h - 8);
+}
+
+function drawLane() {
+  if (state.live) return drawLive();
+  const w = laneW();
+  const h = laneH();
+  const n = Math.max(1, state.syls.length);
+  const y = (st) => laneY(st, h);
+  const colW = w / n;
+
+  cx.clearRect(0, 0, w, h);
+  drawGrid(w, h);
 
   // 列の仕切り（声調は上の帯に大きく出しているので、ここには書かない）
   for (let i = 1; i < n; i++) {
@@ -400,20 +472,19 @@ async function startRec() {
   }
   holding = true;
   mic.classList.add('rec');
-  $('#micState').textContent = '録音中…';
-  // 収録中に「拾えているか」をその場で見せる。実機で無音判定に落ちていても気付ける
-  rec.start(({ hz, voicedRatio }) => {
-    if (!holding) return;
-    $('#micState').textContent = hz
-      ? `録音中… ${Math.round(hz)} Hz ／ 声を拾えています ${Math.round(voicedRatio * 100)}%`
-      : '録音中… 声を拾えていません';
-  });
+  $('#micState').textContent = '離すと判定します';
+  // 実況はレーンに大きく出す（指の近くの小さい文字は見えないため）
+  state.live = true;
+  state.user = null;
+  drawLive();
+  rec.start(() => { if (state.live) drawLive(); });
 }
 
 function stopRec() {
   pressed = false;
   if (!holding) return;
   holding = false;
+  state.live = false;
   mic.classList.remove('rec');
   const frames = rec.stop();
   analyze(frames);
@@ -431,17 +502,20 @@ function analyze(rawFrames) {
   state.diag = null;
   if (dur < 0.35) {
     $('#micState').textContent = '短すぎます。押したまま最後まで言い切ってください';
+    drawLane();
     return;
   }
   if (fps < 25) {
     $('#micState').textContent =
       `取り込みが ${Math.round(fps)}回/秒 に間引かれました。画面を表示したまま、もう一度`;
+    drawLane();
     return;
   }
 
   const ref = medianHz(frames);
   if (!ref) {
     $('#micState').textContent = '声が取れませんでした。口を画面下端に近づけて、もう一度';
+    drawLane();
     return;
   }
   state.refHz = ref;

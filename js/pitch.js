@@ -100,7 +100,7 @@ export class PitchRecorder {
       const { hz, rms, clarity } = detect(this.buf, this.ctx.sampleRate);
       const now = performance.now();
       this.frames.push({ t: (now - this.t0) / 1000, hz, rms, clarity });
-      if (onFrame && now - lastReport > 100) {
+      if (onFrame && now - lastReport > 55) { // 実況を描くので短め
         lastReport = now;
         const v = this.frames.filter((f) => f.hz > 0).length;
         onFrame({ hz, rms, voicedRatio: v / this.frames.length, frames: this.frames.length });
