@@ -1,14 +1,14 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js?v=9';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=9';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=9';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=9';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=10';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=10';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=10';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=10';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v9';
+const APP_VERSION = 'v10';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -119,6 +119,7 @@ function renderText() {
   }).join('');
 
   fitHanzi();
+  renderToneBar();
   $('#ja').textContent = item.ja;
 
   const notes = [];
@@ -140,6 +141,36 @@ function renderText() {
 }
 
 const withTone = (py, tone) => py.replace(/[1-5]$/, String(tone));
+
+const TONE_SHORT = { 1: '一声', 2: '二声', 3: '三声', 4: '四声', 5: '軽声' };
+
+/**
+ * 声調の帯：グラフの各列の真上に、その声調の輪郭を大きく並べる。
+ * ★記号（ˉˊˇˋ）ではなく**形そのもの**を置く。このアプリの言語は「形」なので、
+ *   ここで形を覚えれば下のグラフがそのまま読める。
+ */
+function renderToneBar() {
+  const host = $('#tonebar');
+  const n = state.syls.length;
+  host.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+  // 縦は実際の音域（±6半音）いっぱいに使う。レーンと同じ ±9.5 に合わせると
+  // 形が浅くなって一目で読めない。ここは「形を覚える」ための図なので誇張する。
+  const W = 36, H = 30, padY = 3;
+  host.innerHTML = state.syls.map((s) => {
+    const pts = contour(s.realized, 20);
+    const span = s.realized === 5 ? 0.45 : 1;
+    const d = pts.map((p, i) => {
+      const x = (p.t / span) * (W - 6) + 3;
+      const st = Math.max(-6, Math.min(6, p.st));
+      const y = padY + ((6 - st) / 12) * (H - padY * 2);
+      return `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
+    }).join(' ');
+    return `<div class="tone-cell${s.sandhi ? ' sandhi' : ''}">
+      <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><path d="${d}"/></svg>
+      <span class="tone-l">${TONE_SHORT[s.realized]}${s.sandhi ? '←三' : ''}</span>
+    </div>`;
+  }).join('');
+}
 
 /**
  * 漢字＋注音＋ピンインが1行に収まるサイズへ。
@@ -202,20 +233,12 @@ function drawLane() {
     cx.fillText(label, w - 7, y(st) + 3);
   });
 
-  // 列の仕切りと声調番号
-  cx.font = '500 10px -apple-system, system-ui, sans-serif';
-  cx.textAlign = 'center';
-  for (let i = 0; i < n; i++) {
-    if (i > 0) {
-      cx.beginPath();
-      cx.moveTo(colW * i, 8); cx.lineTo(colW * i, h - 8);
-      cx.strokeStyle = 'rgba(236,230,220,.07)';
-      cx.stroke();
-    }
-    const s = state.syls[i];
-    if (!s) continue;
-    cx.fillStyle = s.sandhi ? 'rgba(224,168,60,.75)' : 'rgba(236,230,220,.32)';
-    cx.fillText(`${s.realized === 5 ? '軽' : s.realized}${s.sandhi ? '←3' : ''}`, colW * (i + .5), h - 6);
+  // 列の仕切り（声調は上の帯に大きく出しているので、ここには書かない）
+  for (let i = 1; i < n; i++) {
+    cx.beginPath();
+    cx.moveTo(colW * i, 6); cx.lineTo(colW * i, h - 6);
+    cx.strokeStyle = 'rgba(236,230,220,.07)';
+    cx.stroke();
   }
 
   // 聴き直し中の列を光らせる（どこを鳴らしているか分かるように）
@@ -299,20 +322,26 @@ function renderSheet() {
   if (d) {
     const pct = Math.round((d.voiced / d.frames) * 100);
     const seg = state.seginfo;
-    const segTxt = state.fallback && seg
-      ? `声のかたまりを ${seg.detected} 個検出し、`
-        + `${seg.adjusted.merged ? `${seg.adjusted.merged}回結合` : ''}`
-        + `${seg.adjusted.merged && seg.adjusted.split ? '・' : ''}`
-        + `${seg.adjusted.split ? `${seg.adjusted.split}回分割` : ''}`
-        + `して${state.syls.length}音節に合わせた。1音ずつ区切って言うと検出が合いやすい。`
-      : '声のかたまりが音節数とぴったり一致した。';
+    let segTxt = '声の切れ目が音節数とぴったり一致した。';
+    if (state.fallback && seg) {
+      if (seg.adjusted.nuclei) {
+        segTxt = `声が繋がっていたので、音量の山（母音）を ${state.syls.length} 個数えて割り当てた。`;
+      } else {
+        segTxt = `声のかたまりを ${seg.detected} 個検出し、`
+          + `${seg.adjusted.merged ? `${seg.adjusted.merged}回結合` : ''}`
+          + `${seg.adjusted.merged && seg.adjusted.split ? '・' : ''}`
+          + `${seg.adjusted.split ? `${seg.adjusted.split}回分割` : ''}`
+          + `して${state.syls.length}音節に合わせた。`;
+      }
+    }
     lines.push('<hr><b>この収録の測定値</b><br>'
-      + `基準ピッチ ${Math.round(state.refHz)} Hz ／ 有声 ${pct}%<br>`
+      + `声の高さ（中央）${Math.round(state.refHz)} Hz<br>`
+      + `押していた時間のうち、声として拾えたのは ${pct}%（40%を超えていれば十分）<br>`
       + `${d.frames}フレーム・${Math.round(d.fps)}回/秒`
       + (d.prepMs ? ` ／ マイク準備 ${d.prepMs}ms` : '') + '<br>'
       + segTxt);
     if (pct < 25) {
-      lines.push('<b>声を拾えている割合が低い。</b>口をマイク（画面下端）に近づけ、'
+      lines.push('<b>声として拾えた割合が低い。</b>口をマイク（画面下端）に近づけ、'
         + '母音を伸ばし気味に、少し大きめの声で言うと安定する。');
     }
     if (state.audioBuf) {
@@ -376,8 +405,8 @@ async function startRec() {
   rec.start(({ hz, voicedRatio }) => {
     if (!holding) return;
     $('#micState').textContent = hz
-      ? `録音中… ${Math.round(hz)} Hz ／ 有声 ${Math.round(voicedRatio * 100)}%`
-      : `録音中… 声を拾えていません（有声 ${Math.round(voicedRatio * 100)}%）`;
+      ? `録音中… ${Math.round(hz)} Hz ／ 声を拾えています ${Math.round(voicedRatio * 100)}%`
+      : '録音中… 声を拾えていません';
   });
 }
 

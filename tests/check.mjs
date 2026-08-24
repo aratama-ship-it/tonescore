@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { DECKS, syllables, isPunct } from '../js/data/phrases.js';
 import { toBopomofo, toPinyinMarked, splitTone } from '../js/bopomofo.js';
 import { applySandhi, contour, judge } from '../js/tones.js';
-import { segment, normalize, medianHz, detect, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from '../js/pitch.js';
+import { segment, normalize, medianHz, detect, smoothTrack, decideVoicing, trimEdges, rejectOutliers, syllableNuclei } from '../js/pitch.js';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok', name); };
@@ -322,11 +322,56 @@ t('多すぎれば間隔の狭い順に結合して音節数へ合わせる', ()
   assert.equal(r.exact, false);
   assert.equal(r.adjusted.merged, 2);
 });
-t('ひと続きでも、音量の谷で割って音節数へ合わせる', () => {
+// ★実機報告（2026-08-19）「早く喋るとズレる。1音節ずつ喋れば合うが、遅すぎて現実的でない」。
+//   自然な速さでは音節が繋がり無声の切れ目が出ないので、音量の山（母音）を数えて割る。
+const running = (n, gapDip = 0.25) => {
+  // 無声を挟まず、音量の山が n 個ある連続発話を作る
+  const out = []; let t = 0;
+  for (let k = 0; k < n; k++) {
+    for (let i = 0; i < 18; i++) {
+      const u = i / 17;
+      const amp = 0.03 + 0.07 * Math.sin(Math.PI * u);          // 山
+      out.push({ t, hz: 190 + k * 4, rms: Math.max(0.03 * gapDip, amp), clarity: .8 });
+      t += 0.02;
+    }
+  }
+  return out;
+};
+t('繋がった発話でも、音量の山を数えて音節数に割り当てる', () => {
+  const segs = syllableNuclei(running(5), 5);
+  assert.ok(segs, '山を見つけられなかった');
+  assert.equal(segs.length, 5);
+  for (let i = 1; i < segs.length; i++) {
+    assert.ok(segs[i].from >= segs[i - 1].to, '区間が前後している');
+  }
+  // 各区間が、対応する山の位置に載っているか（等分ではないことの確認）
+  const mid = segs.map((s) => (s.from + s.to) / 2);
+  mid.forEach((m, i) => {
+    const expected = (i + 0.5) * 18 * 0.02;
+    assert.ok(Math.abs(m - expected) < 0.12, `${i}番目の中心が ${m.toFixed(2)}s（期待 ${expected.toFixed(2)}s）`);
+  });
+});
+t('山が音節数より多くても、際立ちの大きい順に必要数だけ採る', () => {
+  const segs = syllableNuclei(running(7), 4);
+  assert.ok(segs);
+  assert.equal(segs.length, 4);
+});
+t('山が足りなければ null を返す（別の手に任せる）', () => {
+  assert.equal(syllableNuclei(running(2), 6), null);
+});
+t('segment() は繋がった発話で「山を数える」経路に入る', () => {
+  const r = segment(running(5), 5);
+  assert.equal(r.segs.length, 5);
+  assert.equal(r.adjusted.nuclei, true, '山を数える経路に入っていない');
+});
+
+t('間がほぼ無く繋がっていても、音節数ぶんの区間になる', () => {
   const r = segment(speech(4, 1), 4); // 間がほぼ無く1つに繋がる
   assert.equal(r.segs.length, 4);
-  assert.ok(r.adjusted.split >= 1);
   r.segs.forEach((s) => assert.ok(s.pts.length >= 2, '空の区間ができている'));
+  for (let i = 1; i < r.segs.length; i++) {
+    assert.ok(r.segs[i].from >= r.segs[i - 1].to, '区間が前後している');
+  }
 });
 t('区間は時間順に並び、重ならない', () => {
   const r = segment(speech(5), 3);

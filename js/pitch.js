@@ -272,6 +272,68 @@ export function medianHz(frames) {
 }
 
 /**
+ * 音節の核（母音）を、音量の山として数える。
+ *
+ * ★自然な速さで喋ると音節は繋がり、無声の切れ目は現れない。
+ *   「一番音量が小さい所で割る」では当たらない（2026-08-19の実機報告）。
+ *   音節はひとつにつき母音＝音量の山を1つ持つので、**山を数えて谷で割る**。
+ *   山の「際立ち（prominence）」で数を合わせるため、弱い山（子音の渡り）に釣られない。
+ * @returns {Array|null} 期待数ぶんの区間。山が足りなければ null（呼び出し側が別の手を使う）
+ */
+export function syllableNuclei(frames, expected) {
+  const voiced = frames.filter((f) => f.hz > 0);
+  if (voiced.length < expected * 3) return null;
+  const from = voiced[0].t, to = voiced[voiced.length - 1].t;
+  const win = frames.filter((f) => f.t >= from && f.t <= to);
+  if (win.length < expected * 3) return null;
+
+  // 音量を5点移動平均でならす（1フレームのゆらぎで山が乱立しないように）
+  const env = win.map((_, i) => {
+    let sum = 0, n = 0;
+    for (let k = Math.max(0, i - 2); k <= Math.min(win.length - 1, i + 2); k++) { sum += win[k].rms; n++; }
+    return sum / n;
+  });
+
+  // 局所最大と、その際立ちを dB で測る。
+  // ★端にある山も数える（範囲外は -∞ として扱う）。端を無視すると、
+  //   最初や最後の音節の山を取りこぼして数が合わなくなる。
+  const at = (i) => (i < 0 || i >= env.length ? -Infinity : env[i]);
+  const peaks = [];
+  for (let i = 0; i < env.length; i++) {
+    if (env[i] >= at(i - 1) && env[i] > at(i + 1)) {
+      let l = env[i], r = env[i];
+      for (let k = i; k >= 0 && env[k] <= env[i]; k--) l = Math.min(l, env[k]);
+      for (let k = i; k < env.length && env[k] <= env[i]; k++) r = Math.min(r, env[k]);
+      const base = Math.max(l, r);
+      peaks.push({ i, prom: 20 * Math.log10((env[i] + 1e-9) / (base + 1e-9)) });
+    }
+  }
+  if (peaks.length < expected) return null;
+
+  // 際立ちの大きい順に必要数だけ採り、時間順へ戻す
+  const keep = peaks.slice().sort((a, b) => b.prom - a.prom).slice(0, expected).sort((a, b) => a.i - b.i);
+
+  // 隣り合う山の谷を境界にする
+  const bounds = [0];
+  for (let k = 0; k < keep.length - 1; k++) {
+    let at = keep[k].i, lowest = Infinity;
+    for (let i = keep[k].i; i <= keep[k + 1].i; i++) {
+      if (env[i] < lowest) { lowest = env[i]; at = i; }
+    }
+    bounds.push(at);
+  }
+  bounds.push(win.length - 1);
+
+  const segs = [];
+  for (let k = 0; k < expected; k++) {
+    const pts = win.slice(bounds[k], bounds[k + 1] + 1).filter((f) => f.hz > 0);
+    if (pts.length < 3) return null;
+    segs.push({ from: pts[0].t, to: pts[pts.length - 1].t, pts });
+  }
+  return segs;
+}
+
+/**
  * 有声区間を音節へ割り当てる。
  *
  * ★以前は「検出数が音節数と一致しなければ全体を均等割」にしていたが、
@@ -299,6 +361,16 @@ export function segment(frames, expected) {
   if (!segs.length) return { segs: [], exact: false, empty: true };
 
   const detected = segs.length;
+  if (detected === expected) return { segs, exact: true, detected, adjusted: { merged: 0, split: 0 } };
+
+  // ★足りないとき＝音節が繋がって喋られたとき。音量の山（母音）を数えて割る。
+  //   自然な速さではこれが本命の経路。逆に多すぎるときは無声の切れ目という強い証拠が
+  //   あるので、そちらを信じて結合する（下）。
+  if (detected < expected) {
+    const byNuclei = syllableNuclei(frames, expected);
+    if (byNuclei) return { segs: byNuclei, exact: false, detected, adjusted: { merged: 0, split: 0, nuclei: true } };
+  }
+
   let merged = 0, split = 0;
 
   // 多すぎる：間隔が最も狭い隣同士から結合していく
