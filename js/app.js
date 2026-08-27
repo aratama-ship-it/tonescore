@@ -1,14 +1,15 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js?v=14';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=14';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=14';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=14';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=15';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=15';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=15';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=15';
+import * as history from './history.js?v=15';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v14';
+const APP_VERSION = 'v15';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -427,8 +428,60 @@ function renderSheet() {
           : `${u.syl.char} 割り当てなし`)).join('<br>'));
     }
   }
+
+  lines.push(renderHistory());
   $('#sheetBody').innerHTML = lines.join('<br>');
 }
+
+const TONE_LABEL = { 1: '第一声', 2: '第二声', 3: '第三声', 4: '第四声', 5: '軽声' };
+
+/**
+ * これまでの成績。★数字を出すだけでなく「まだ判断できない」も正直に言う。
+ *   数回の結果で「あなたの弱点は◯◯」と断定しない。
+ */
+function renderHistory() {
+  const rows = history.all();
+  if (!rows.length) return '';
+  const stats = history.byTone(rows);
+  const bars = stats.map((m) => {
+    const pct = Math.round(m.rate * 100);
+    const w = Math.max(2, Math.round(m.rate * 100));
+    const color = m.total < 3 ? 'var(--muted)' : (m.rate >= 0.8 ? 'var(--ok)' : 'var(--model)');
+    return `<div style="display:flex;align-items:center;gap:8px;margin:3px 0">
+      <span style="width:3.5em;flex:none">${TONE_LABEL[m.tone]}</span>
+      <span style="flex:1;height:6px;background:var(--line);border-radius:3px;overflow:hidden">
+        <span style="display:block;height:100%;width:${w}%;background:${color}"></span>
+      </span>
+      <span style="width:6.5em;flex:none;text-align:right;font-variant-numeric:tabular-nums">${pct}%（${m.ok}/${m.total}）</span>
+    </div>`;
+  }).join('');
+
+  const w = history.weakest(rows);
+  let advice;
+  if (!w) {
+    advice = stats.every((m) => m.total < 3)
+      ? 'まだ回数が少ないので、弱点は判断できない（各声調3回以上から）。'
+      : 'いまのところ落としている声調はない。';
+  } else {
+    const streak = history.currentStreak(w.tone, rows);
+    advice = `<b>いちばん落としているのは ${TONE_LABEL[w.tone]}</b>`
+      + `（${Math.round(w.rate * 100)}%・${w.ok}/${w.total}）`
+      + (w.label ? `。多い指摘は「${w.label}」` : '')
+      + (streak >= 2 ? `。直近 ${streak} 回続けて外している` : '');
+  }
+  return `<hr><b>これまでの成績</b>（この端末に${rows.length}件・外部送信なし）<br>`
+    + bars + advice
+    + '<br><button id="histClear" style="margin-top:8px;appearance:none;background:transparent;'
+    + 'border:1px solid var(--line-2);color:var(--muted);border-radius:3px;'
+    + 'padding:5px 10px;font-family:inherit;font-size:11px">成績を消す</button>';
+}
+
+// シート内は毎回描き直すので、クリックは親で受ける
+$('#sheetBody').addEventListener('click', (e) => {
+  if (e.target?.id !== 'histClear') return;
+  history.clear();
+  renderSheet();
+});
 
 $('#infoBtn').addEventListener('click', () => {
   const sheet = $('#sheet');
@@ -539,6 +592,7 @@ function analyze(rawFrames) {
     const curve = normalize(segs[i], ref);
     return { syl: s, curve, seg: segs[i] && { from: segs[i].from, to: segs[i].to }, verdict: judge(s.realized, curve) };
   });
+  history.record(state.user); // 声調ごとの弱点を溜める（判定はしない、結論を数えるだけ）
   const okCount = state.user.filter((u) => u.verdict.ok).length;
   $('#micState').textContent = `${okCount} / ${n} 音節が一致`;
   $('#btnPlayMine').disabled = !rec.lastBlobUrl;

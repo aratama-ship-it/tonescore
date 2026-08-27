@@ -91,6 +91,32 @@ export const DECKS = [
     ],
   },
   {
+    id: 'number',
+    title: '数字・時間',
+    subtitle: '値段・時刻・日付。聞き取れないと困る順',
+    items: [
+      { zh: '現在幾點？', pinyin: 'xian4 zai4 ji3 dian3', ja: '今何時ですか？', verify: 'ok' },
+      { zh: '三點半。', pinyin: 'san1 dian3 ban4', ja: '3時半です。', note: '半＝30分。「三點三十分」とも言うが会話では「半」。', verify: 'ok' },
+      { zh: '一百五十塊。', pinyin: 'yi4 bai3 wu3 shi2 kuai4', ja: '150元です。', note: '塊＝元の口語。台湾ドルは会話では「塊」で言う。', verify: 'ok' },
+      { zh: '要等多久？', pinyin: 'yao4 deng3 duo1 jiu3', ja: 'どのくらい待ちますか？', verify: 'ok' },
+      { zh: '大概十分鐘。', pinyin: 'da4 gai4 shi2 fen1 zhong1', ja: 'だいたい10分です。', note: '大概＝だいたい。相手の返事として聞き取る側。', verify: 'ok' },
+      { zh: '幾號營業？', pinyin: 'ji3 hao4 ying2 ye4', ja: '何日に営業していますか？', note: '號＝日付。台湾では日常会話で「日」より「號」。', verify: 'check' },
+    ],
+  },
+  {
+    id: 'smalltalk',
+    title: '天気・雑談',
+    subtitle: '間を持たせる話題',
+    items: [
+      { zh: '今天天氣真好。', pinyin: 'jin1 tian1 tian1 qi4 zhen1 hao3', ja: '今日はいい天気ですね。', verify: 'ok' },
+      { zh: '好熱喔！', pinyin: 'hao3 re4 o5', ja: '暑いですね！', note: '喔＝台湾でよく付く語気助詞。付けると一気に台湾らしくなる。', verify: 'ok' },
+      { zh: '會下雨嗎？', pinyin: 'hui4 xia4 yu3 ma5', ja: '雨は降りますか？', verify: 'ok' },
+      { zh: '你去過日本嗎？', pinyin: 'ni3 qu4 guo5 ri4 ben3 ma5', ja: '日本に行ったことはありますか？', note: '過＝経験を表す。軽声で置く。', verify: 'ok' },
+      { zh: '台灣的食物很好吃。', pinyin: 'tai2 wan1 de5 shi2 wu4 hen3 hao3 chi1', ja: '台湾の食べ物はとても美味しいです。', verify: 'ok' },
+      { zh: '我下次還要來。', pinyin: 'wo3 xia4 ci4 hai2 yao4 lai2', ja: '次もまた来たいです。', verify: 'ok' },
+    ],
+  },
+  {
     id: 'stage',
     title: '仕事・公演',
     subtitle: '現場で本当に必要になる質問だけ',

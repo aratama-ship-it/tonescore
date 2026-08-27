@@ -7,18 +7,19 @@
 //   `does not provide an export named 'decideVoicing'` で起動不能になった（2026-08-18）。
 //   `?v=` を付けられるのは HTML から参照する物だけで、ESモジュールの import 先には
 //   付け忘れが起きる。付け忘れても壊れない側に倒す。
-const VERSION = 'v14';
+const VERSION = 'v15';
 const CACHE = `tonescore-${VERSION}`;
 const ASSETS = [
   './',
   './index.html',
-  './css/app.css?v=14',
-  './js/app.js?v=14',
-  './js/tones.js?v=14',
-  './js/pitch.js?v=14',
-  './js/bopomofo.js?v=14',
-  './js/data/phrases.js?v=14',
-  './manifest.json?v=14',
+  './css/app.css?v=15',
+  './js/app.js?v=15',
+  './js/tones.js?v=15',
+  './js/pitch.js?v=15',
+  './js/bopomofo.js?v=15',
+  './js/history.js?v=15',
+  './js/data/phrases.js?v=15',
+  './manifest.json?v=15',
 ];
 
 self.addEventListener('install', (e) => {

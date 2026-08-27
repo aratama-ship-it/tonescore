@@ -9,6 +9,15 @@ import { segment, normalize, medianHz, detect, smoothTrack, decideVoicing, trimE
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok', name); };
 
+// history.js は localStorage を使う。Node には無いので最小の代替を置いてから読み込む。
+globalThis.localStorage = {
+  _m: new Map(),
+  getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
+  setItem(k, v) { this._m.set(k, String(v)); },
+  removeItem(k) { this._m.delete(k); },
+};
+const history = await import('../js/history.js');
+
 console.log('\n[0] 版の整合（配信物の取り違え防止）');
 // ★新しいHTML＋古いJSの組み合わせで起動不能になった事故（2026-08-18）の再発防止。
 //   index.html の ?v= / sw.js の VERSION / app.js の APP_VERSION / import先の ?v= を突き合わせる。
@@ -31,7 +40,7 @@ console.log('\n[0] 版の整合（配信物の取り違え防止）');
     }
   });
   t('sw.js の ASSETS が import 先と同じURLを指している', () => {
-    for (const f of ['tones.js', 'pitch.js', 'bopomofo.js', 'data/phrases.js']) {
+    for (const f of ['tones.js', 'pitch.js', 'bopomofo.js', 'history.js', 'data/phrases.js']) {
       assert.ok(sw.includes(`./js/${f}?v=${n}`), `sw.js の ASSETS に ./js/${f}?v=${n} がない`);
     }
   });
@@ -433,6 +442,62 @@ t('句読点はピンインを消費しない', () => {
   const s = syllables({ zh: '謝謝，麻煩你了。', pinyin: 'xie4 xie5 ma2 fan5 ni3 le5' });
   assert.equal(s.filter((x) => !x.punct).length, 6);
   assert.equal(s.filter((x) => x.punct).length, 2);
+});
+
+console.log('\n[13] 声調ごとの弱点の蓄積');
+const mk = (tone, ok, label = 'ラベル', char = '好') => ({
+  syl: { realized: tone, char }, verdict: { ok, label },
+});
+t('記録して声調ごとに数えられる', () => {
+  history.clear();
+  history.record([mk(4, true), mk(3, false, '沈んでいません'), mk(3, false, '沈んでいません')], 100);
+  const byTone = history.byTone();
+  assert.equal(byTone.length, 2);
+  const three = byTone.find((m) => m.tone === 3);
+  assert.equal(three.total, 2);
+  assert.equal(three.ok, 0);
+  assert.equal(three.rate, 0);
+});
+t('声が取れなかったもの（ラベルが —）は記録しない', () => {
+  history.clear();
+  history.record([mk(2, false, '—'), mk(2, true)], 100);
+  assert.equal(history.all().length, 1);
+});
+t('★試行が少ないうちは弱点と断定しない（3回未満）', () => {
+  history.clear();
+  history.record([mk(3, false, '沈んでいません')], 100);
+  assert.equal(history.weakest(), null, '1回で弱点扱いしている');
+  history.record([mk(3, false, '沈んでいません'), mk(3, false, '沈んでいません')], 101);
+  const w = history.weakest();
+  assert.ok(w, '3回あるのに弱点が出ない');
+  assert.equal(w.tone, 3);
+  assert.equal(w.label, '沈んでいません', '多い指摘が添えられていない');
+});
+t('全問正解の声調は弱点にしない', () => {
+  history.clear();
+  history.record([mk(1, true), mk(1, true), mk(1, true)], 100);
+  assert.equal(history.weakest(), null);
+});
+t('正答率が低い方が弱点として選ばれる', () => {
+  history.clear();
+  history.record([mk(2, false), mk(2, false), mk(2, true)], 100);      // 33%
+  history.record([mk(4, false), mk(4, true), mk(4, true)], 101);       // 67%
+  assert.equal(history.weakest().tone, 2);
+});
+t('連続で外している回数を数える（成功で途切れる）', () => {
+  history.clear();
+  history.record([mk(3, false), mk(3, false)], 100);
+  assert.equal(history.currentStreak(3), 2);
+  history.record([mk(3, true)], 101);
+  assert.equal(history.currentStreak(3), 0);
+  history.record([mk(3, false)], 102);
+  assert.equal(history.currentStreak(3), 1);
+});
+t('壊れた保存内容でも落ちない（空から始める）', () => {
+  localStorage.setItem('tonescore.history.v1', '{壊れたJSON');
+  assert.deepEqual(history.all(), []);
+  assert.equal(history.weakest(), null);
+  history.clear();
 });
 
 console.log(`\n${pass} 件すべて通過\n`);
