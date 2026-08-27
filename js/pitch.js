@@ -297,9 +297,14 @@ export function syllableNuclei(frames, expected) {
   // 局所最大と、その際立ちを dB で測る。
   // ★端にある山も数える（範囲外は -∞ として扱う）。端を無視すると、
   //   最初や最後の音節の山を取りこぼして数が合わなくなる。
+  // ★★山の候補は「声が出ているフレーム」に限る（hz > 0）。
+  //   ボタンを押した瞬間の指の音・息・物音は音量だけ大きく、周期性がないので hz = 0 になる。
+  //   音量だけで山を数えると、これを1音節目として横取りし、以降が1つずつズレる
+  //   （実機報告「1番最初がたまにズレる」2026-08-19）。
   const at = (i) => (i < 0 || i >= env.length ? -Infinity : env[i]);
   const peaks = [];
   for (let i = 0; i < env.length; i++) {
+    if (!win[i].hz) continue; // 声でない山（物音・息）は音節の核になれない
     if (env[i] >= at(i - 1) && env[i] > at(i + 1)) {
       let l = env[i], r = env[i];
       for (let k = i; k >= 0 && env[k] <= env[i]; k--) l = Math.min(l, env[k]);
@@ -310,8 +315,23 @@ export function syllableNuclei(frames, expected) {
   }
   if (peaks.length < expected) return null;
 
-  // 際立ちの大きい順に必要数だけ採り、時間順へ戻す
-  const keep = peaks.slice().sort((a, b) => b.prom - a.prom).slice(0, expected).sort((a, b) => a.i - b.i);
+  // ★同じ音節の中の小さな揺れを2つの山と数えないよう、山どうしに最低間隔を設ける。
+  //   際立ちの大きい順に採り、既に採った山と近すぎるものは飛ばす。
+  //   これで数が足りなくなる場合だけ、間隔の条件を外して採り直す。
+  const dt = win.length > 1 ? (win[win.length - 1].t - win[0].t) / (win.length - 1) : 0.02;
+  const minSep = Math.max(2, Math.round(0.07 / dt)); // 70ms
+  const byProm = peaks.slice().sort((a, b) => b.prom - a.prom);
+  const picked = [];
+  for (const pk of byProm) {
+    if (picked.length >= expected) break;
+    if (picked.every((q) => Math.abs(q.i - pk.i) >= minSep)) picked.push(pk);
+  }
+  if (picked.length < expected) {
+    // 間隔を守ると足りない＝かなり速い発話。条件を外して数だけ合わせる
+    picked.length = 0;
+    picked.push(...byProm.slice(0, expected));
+  }
+  const keep = picked.sort((a, b) => a.i - b.i);
 
   // 隣り合う山の谷を境界にする
   const bounds = [0];

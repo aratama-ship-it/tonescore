@@ -351,6 +351,51 @@ t('繋がった発話でも、音量の山を数えて音節数に割り当て�
     assert.ok(Math.abs(m - expected) < 0.12, `${i}番目の中心が ${m.toFixed(2)}s（期待 ${expected.toFixed(2)}s）`);
   });
 });
+// ★実機報告（2026-08-19）「1番最初がたまにズレる」の回帰テスト。
+//   ボタンを押した瞬間の指の音・息は、音量は大きいが周期性がない（hz=0）。
+//   音量だけで山を数えると、これを1音節目として横取りし以降が1つずつズレる。
+t('押した瞬間の物音（音量は大きいが声でない）を音節として数えない', () => {
+  const out = [];
+  let t = 0;
+  // 先頭に「大きいが無声」の物音を置く
+  for (let i = 0; i < 10; i++) { out.push({ t, hz: 0, rms: 0.12, clarity: 0.1 }); t += 0.02; }
+  for (let i = 0; i < 5; i++) { out.push({ t, hz: 0, rms: 0.002, clarity: 0 }); t += 0.02; }
+  // そのあとに、山が3つある繋がった発話
+  for (let k = 0; k < 3; k++) {
+    for (let i = 0; i < 18; i++) {
+      const u = i / 17;
+      out.push({ t, hz: 200, rms: 0.02 + 0.06 * Math.sin(Math.PI * u), clarity: 0.8 });
+      t += 0.02;
+    }
+  }
+  const segs = syllableNuclei(out, 3);
+  assert.ok(segs, '山を見つけられなかった');
+  assert.equal(segs.length, 3);
+  // 物音（0〜0.2秒）が音節に食い込んでいないこと
+  assert.ok(segs[0].from >= 0.28, `1音節目が物音から始まっている: ${segs[0].from.toFixed(2)}秒`);
+});
+t('同じ音節内の小さな揺れを2つの山と数えない（最低間隔）', () => {
+  const out = [];
+  let t = 0;
+  for (let k = 0; k < 3; k++) {
+    for (let i = 0; i < 18; i++) {
+      const u = i / 17;
+      // 山の頂上に小さなくぼみを入れて、揺れで2山に割れやすくする
+      const wobble = Math.abs(u - 0.5) < 0.08 ? -0.008 : 0;
+      out.push({ t, hz: 200, rms: 0.02 + 0.06 * Math.sin(Math.PI * u) + wobble, clarity: 0.8 });
+      t += 0.02;
+    }
+  }
+  const segs = syllableNuclei(out, 3);
+  assert.ok(segs);
+  assert.equal(segs.length, 3);
+  const mid = segs.map((x) => (x.from + x.to) / 2);
+  mid.forEach((m, i) => {
+    const expected = (i + 0.5) * 18 * 0.02;
+    assert.ok(Math.abs(m - expected) < 0.12, `${i}番目の中心が ${m.toFixed(2)}秒（期待 ${expected.toFixed(2)}秒）`);
+  });
+});
+
 t('山が音節数より多くても、際立ちの大きい順に必要数だけ採る', () => {
   const segs = syllableNuclei(running(7), 4);
   assert.ok(segs);
