@@ -257,7 +257,7 @@ input[type=range]::-webkit-slider-thumb {
 
 /* ── タブ ── */
 .tabs {
-  flex: none; display: grid; grid-template-columns: repeat(3, 1fr);
+  flex: none; display: grid; grid-template-columns: repeat(4, 1fr);
   background: rgba(15,18,22,.96); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -275,3 +275,45 @@ input[type=range]::-webkit-slider-thumb {
   body { max-width: 560px; margin-inline: auto; border-inline: 1px solid var(--line); }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+
+/* ── 聞き取りドリル ── */
+.drill { padding: calc(env(safe-area-inset-top) + 14px) 16px 20px; }
+.drill-seg { margin-bottom: 14px; }
+.drill-hint { margin: 0 0 10px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.drill-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.drill-row .btn { flex: 1; }
+.drill-play { font-size: 13px; }
+.drill-display {
+  font-size: 40px; text-align: center; letter-spacing: .06em;
+  font-variant-numeric: tabular-nums; min-height: 52px; line-height: 52px;
+  border-bottom: 1px solid var(--line-2); margin-bottom: 8px;
+}
+.drill-fb { margin: 0 0 10px; font-size: 13.5px; min-height: 22px; text-align: center; }
+.fb-ok { color: var(--ok); }
+.fb-ng { color: var(--model); }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.keypad button {
+  appearance: none; background: var(--ink-2); color: var(--paper);
+  border: 1px solid var(--line-2); border-radius: 3px;
+  font-family: inherit; font-size: 20px; padding: 13px 0;
+  font-variant-numeric: tabular-nums;
+}
+.keypad button:active { background: rgba(236,230,220,.08); }
+.keypad .pad-ok { background: var(--model); border-color: var(--model); color: #fff; font-size: 16px; }
+.drill-tally { margin: 12px 0 0; font-size: 11px; color: var(--muted); line-height: 1.7; }
+
+.pcards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.pcard {
+  appearance: none; background: var(--ink-2); color: var(--paper);
+  border: 1px solid var(--line-2); border-radius: 3px;
+  font-family: inherit; padding: 14px 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+}
+.pcard:active { background: rgba(236,230,220,.06); }
+.pcard-tone svg path { fill: none; stroke: var(--model); stroke-width: 2.4; stroke-linecap: round; }
+.pcard-zh { font-family: var(--f-han); font-size: 26px; line-height: 1.15; }
+.pcard-py { font-size: 12px; color: var(--paper-2); }
+.pcard-ja { font-size: 10.5px; color: var(--muted); }
+.pcard-correct { border-color: var(--ok); background: rgba(156,203,106,.08); }
+.pcard-wrong { border-color: var(--model); background: rgba(226,81,58,.08); }

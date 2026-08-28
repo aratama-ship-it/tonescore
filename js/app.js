@@ -1,15 +1,16 @@
 // 聲調譜 TONESCORE — 画面の組み立てと譜面の描画
-import { DECKS, syllables, isPunct } from './data/phrases.js?v=15';
-import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=15';
-import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=15';
-import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=15';
-import * as history from './history.js?v=15';
+import { DECKS, syllables, isPunct } from './data/phrases.js?v=16';
+import { toBopomofo, splitTone, toPinyinMarked } from './bopomofo.js?v=16';
+import { contour, applySandhi, playToneMelody, judge, TONE_NAMES } from './tones.js?v=16';
+import { PitchRecorder, medianHz, segment, normalize, smoothTrack, decideVoicing, trimEdges, rejectOutliers } from './pitch.js?v=16';
+import * as history from './history.js?v=16';
+import { initDrills } from './drills.js?v=16';
 
 const $ = (s) => document.querySelector(s);
 
 // ★画面に出す動作中のバージョン。実機で「どれが動いているか」を推測しないための表示。
 //   index.html の ?v= と sw.js の VERSION と必ず揃える。
-const APP_VERSION = 'v15';
+const APP_VERSION = 'v16';
 const ST_MAX = 9.5; // レーンの上下限（半音）
 
 const state = {
@@ -878,9 +879,10 @@ function setMediaSession(it) {
 
 /* ── タブ ───────────────────────────────────────── */
 function switchView(v) {
-  ['train', 'ear', 'list'].forEach((k) => { $(`#view-${k}`).hidden = k !== v; });
+  ['train', 'drill', 'ear', 'list'].forEach((k) => { $(`#view-${k}`).hidden = k !== v; });
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.view === v));
   if (v === 'train') requestAnimationFrame(() => { sizeCanvas(); fitHanzi(); });
+  if (v === 'drill') drills.start();
   if (v === 'ear' && !ear.playing) $('#earPlay').textContent = `「${DECKS[state.deck].title}」を再生`;
 }
 document.querySelectorAll('.tab').forEach((t) => {
@@ -895,6 +897,8 @@ window.addEventListener('resize', () => requestAnimationFrame(() => { sizeCanvas
 /* ── 起動 ───────────────────────────────────────── */
 // 検証用フック（マイクなしで解析→描画の経路を確かめるため）
 window.__tonescore = { state, analyze, drawLane, rec };
+
+const drills = initDrills({ speak, $ });
 
 renderList();
 renderVoiceSel();

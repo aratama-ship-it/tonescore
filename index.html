@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#0F1216">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="manifest.json?v=15">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=15">
-<link rel="stylesheet" href="css/app.css?v=15">
+<link rel="manifest" href="manifest.json?v=16">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=16">
+<link rel="stylesheet" href="css/app.css?v=16">
 </head>
 <body>
 
@@ -110,6 +110,9 @@
   </section>
 </main>
 
+<!-- ───────────────── 聞き取りドリル ───────────────── -->
+<main id="view-drill" class="view view-scroll" hidden></main>
+
 <!-- ───────────────── フレーズ集 ───────────────── -->
 <main id="view-list" class="view view-scroll" hidden>
   <section class="list" id="deckList"></section>
@@ -117,10 +120,11 @@
 
 <nav class="tabs">
   <button data-view="train" class="tab on"><span>譜</span>練習</button>
+  <button data-view="drill" class="tab"><span>聴</span>聞き取り</button>
   <button data-view="ear" class="tab"><span>耳</span>耳だけ</button>
   <button data-view="list" class="tab"><span>集</span>フレーズ</button>
 </nav>
 
-<script type="module" src="js/app.js?v=15"></script>
+<script type="module" src="js/app.js?v=16"></script>
 </body>
 </html>

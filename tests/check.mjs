@@ -17,6 +17,8 @@ globalThis.localStorage = {
   removeItem(k) { this._m.delete(k); },
 };
 const history = await import('../js/history.js');
+const { numToHanzi, timeToHanzi, genPrice, genTime, parseAnswer } = await import('../js/numbers.js');
+const { PAIRS } = await import('../js/data/pairs.js');
 
 console.log('\n[0] 版の整合（配信物の取り違え防止）');
 // ★新しいHTML＋古いJSの組み合わせで起動不能になった事故（2026-08-18）の再発防止。
@@ -33,14 +35,17 @@ console.log('\n[0] 版の整合（配信物の取り違え防止）');
     const htmlVers = [...new Set(html.match(/\?v=\d+/g) || [])];
     assert.deepEqual(htmlVers, [`?v=${n}`], `index.html の ?v= が不揃い: ${htmlVers.join(',')}`);
   });
-  t('app.js の import 先すべてに版が付いている', () => {
-    const imports = app.match(/from '\.\/[^']+'/g) || [];
-    for (const im of imports) {
-      assert.ok(im.includes(`?v=${n}`), `版が付いていない import: ${im}`);
+  t('app.js / drills.js の import 先すべてに版が付いている', () => {
+    const drills = read('../js/drills.js');
+    for (const src of [app, drills]) {
+      const imports = src.match(/from '\.\/[^']+'/g) || [];
+      for (const im of imports) {
+        assert.ok(im.includes(`?v=${n}`), `版が付いていない import: ${im}`);
+      }
     }
   });
   t('sw.js の ASSETS が import 先と同じURLを指している', () => {
-    for (const f of ['tones.js', 'pitch.js', 'bopomofo.js', 'history.js', 'data/phrases.js']) {
+    for (const f of ['tones.js', 'pitch.js', 'bopomofo.js', 'history.js', 'drills.js', 'numbers.js', 'data/phrases.js', 'data/pairs.js']) {
       assert.ok(sw.includes(`./js/${f}?v=${n}`), `sw.js の ASSETS に ./js/${f}?v=${n} がない`);
     }
   });
@@ -498,6 +503,64 @@ t('壊れた保存内容でも落ちない（空から始める）', () => {
   assert.deepEqual(history.all(), []);
   assert.equal(history.weakest(), null);
   history.clear();
+});
+
+console.log('\n[14] 数字の漢字読み（聞き取りドリル）');
+t('位取りと「兩」「零」の規則', () => {
+  const cases = {
+    0: '零', 2: '兩', 5: '五', 10: '十', 12: '十二', 15: '十五',
+    20: '二十', 22: '二十二', 100: '一百', 105: '一百零五', 110: '一百一十',
+    150: '一百五十', 200: '兩百', 205: '兩百零五', 222: '兩百二十二',
+    999: '九百九十九', 1000: '一千', 1005: '一千零五', 1200: '一千兩百', 2000: '兩千',
+  };
+  for (const [n, h] of Object.entries(cases)) {
+    assert.equal(numToHanzi(Number(n)), h, `${n} → ${numToHanzi(Number(n))}（期待 ${h}）`);
+  }
+});
+t('時刻の読み（半・零五分・兩點）', () => {
+  assert.equal(timeToHanzi(3, 30), '三點半');
+  assert.equal(timeToHanzi(2, 0), '兩點');
+  assert.equal(timeToHanzi(10, 15), '十點十五分');
+  assert.equal(timeToHanzi(3, 5), '三點零五分');
+  assert.equal(timeToHanzi(12, 45), '十二點四十五分');
+});
+t('生成される値段・時刻が範囲内で、漢字に不正がない', () => {
+  let seed = 99;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  for (let i = 0; i < 300; i++) {
+    const p = genPrice(rand);
+    assert.ok(p.value >= 15 && p.value <= 2000, `値段が範囲外: ${p.value}`);
+    assert.ok(!p.hanzi.includes('undefined') && !p.hanzi.startsWith('一十') && !p.hanzi.includes('零零'), p.hanzi);
+    const q = genTime(rand);
+    assert.ok(q.hour >= 1 && q.hour <= 12, `時が範囲外: ${q.hour}`);
+    assert.ok(!q.hanzi.includes('undefined'), q.hanzi);
+  }
+});
+t('答えの解釈（値段はそのまま・時刻は末尾2桁が分）', () => {
+  assert.equal(parseAnswer('price', '150'), 150);
+  assert.equal(parseAnswer('time', '305'), 305);   // 3:05
+  assert.equal(parseAnswer('time', '1015'), 1015); // 10:15
+  assert.equal(parseAnswer('time', '3'), 300);     // 3:00
+  assert.equal(parseAnswer('time', '1361'), null); // 61分は不正
+  assert.equal(parseAnswer('price', ''), null);
+});
+
+console.log('\n[15] 聞き分けペアの整合');
+t('全ペアのピンインが解釈でき、漢字数と一致し、a≠b', () => {
+  for (const p of PAIRS) {
+    for (const side of ['a', 'b']) {
+      const it = p[side];
+      assert.ok(it.zh && it.ja, `${p.id} の ${side} が不完全`);
+      const syls = it.pinyin.trim().split(/\s+/);
+      assert.equal(Array.from(it.zh).length, syls.length, `${p.id}:${it.zh} 漢字数とピンイン数が不一致`);
+      for (const sy of syls) assert.ok(!splitTone(sy).invalid, `${p.id} の ${sy} が不正`);
+    }
+    assert.notEqual(p.a.zh, p.b.zh, `${p.id} の a と b が同一`);
+  }
+});
+t('ペアのIDが重複していない', () => {
+  const ids = PAIRS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length);
 });
 
 console.log(`\n${pass} 件すべて通過\n`);
