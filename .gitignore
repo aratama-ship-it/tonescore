@@ -1,1 +1,3 @@
 .DS_Store
+# レビュー等の判断用HTMLはローカル確認用。公開リポジトリ（GitHub Pages）に載せない
+docs/
